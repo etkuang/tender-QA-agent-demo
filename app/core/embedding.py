@@ -1,14 +1,9 @@
-"""Embedding服务"""
-
 from typing import List
 from sentence_transformers import SentenceTransformer
-
-from app.config import settings
+from config import settings
 
 
 class EmbeddingService:
-    """Embedding服务（单例模式）"""
-
     _instance = None
     _model = None
 
@@ -24,12 +19,6 @@ class EmbeddingService:
             self._model = SentenceTransformer(settings.embedding_model)
         return self._model
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """批量向量化"""
-        vectors = self.model.encode(texts, show_progress_bar=False)
-        return vectors.tolist()
-
     def embed_query(self, query: str) -> List[float]:
-        """查询向量化"""
         result = self.model.encode([query])
         return result[0].tolist()
