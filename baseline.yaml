@@ -1,0 +1,31 @@
+#1. 环境信息
+
+environment:
+  date: "2026-05-21"
+  python_version: "3.10"
+  os: "Windows"
+
+models:
+  retrieval_model: "BAAI/bge-small-zh"  # 检索用的 embedding
+  evaluation_model: "BAAI--bge-m3"  # 裁判模型
+  llm_model: "deepseek-v4-flash"  # 生成用的 LLM
+
+dependencies:
+  sentence_transformers: "2.2.2"
+  chromadb: "0.4.22"
+#2. 系统配置参数
+retrieval_config:
+  fusion_strategy: "weighted"  # baseline 用的策略
+  top_k: 5
+  vector_recall: 20
+  bm25_weight: 0.65  # weighted 策略的 BM25 权重
+  dense_weight: 0.35  # weighted 策略的 Dense 权重
+
+evaluation_config:
+  similarity_threshold: 0.85  # 判断是否相关的阈值
+  top_k_for_eval: 10  # 评估时检索多少条
+
+agent_config:
+  react_max_steps: 5
+  react_temperature: 0.3
+  max_messages_per_session: 30
