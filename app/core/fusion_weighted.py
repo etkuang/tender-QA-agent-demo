@@ -69,9 +69,7 @@ class HybridFusionV2:
             article_num = metadata.get("article_num", "")
             if article_num == "full":
                 is_whole_doc = True
-            doc_type = metadata.get("doc_type", "")
-            if doc_type in ["notice", "opinion", "method"]:
-                is_whole_doc = True
+
 
         # 整体文件：只给基础加分
         if is_whole_doc:

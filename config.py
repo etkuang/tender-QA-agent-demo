@@ -156,11 +156,11 @@ class Settings(BaseSettings):
 
     @property
     def keyword_heavy_patterns(self) -> list:
-        return config_loader.get("intent.keyword_heavy_patterns", [])
+        return config_loader.get("retrieval.keyword_heavy_patterns", [])
 
     @property
     def semantic_heavy_patterns(self) -> list:
-        return config_loader.get("intent.semantic_heavy_patterns", [])
+        return config_loader.get("retrieval.semantic_heavy_patterns", [])
 
     # ========== PDF处理配置 ==========
     @property
