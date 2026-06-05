@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 
 from app_backend_layer.api_routes.chat import router as chat_router
 from app_backend_layer.api_routes.sessions import router as sessions_router
-from app_backend_layer.core.logger import reset_request_id, set_request_id
+from common.logging import reset_request_id, set_request_id
 from app_backend_layer.history.history_db import HistoryManager
 
 

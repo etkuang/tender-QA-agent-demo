@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Deterministic cross-platform path resolution
 # Prevents context drifting when launched from different working directories
 CORE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = CORE_DIR.parent
+BACKEND_LAYER_ROOT = CORE_DIR.parent
 
 
 class AppSettings(BaseSettings):
@@ -26,30 +26,17 @@ class AppSettings(BaseSettings):
     AGENT_API_KEY: str = "tender-agent"
     AGENT_MODEL_NAME: str = "tender-agent"
 
-    # ---------------- Frontend Service Discovery ----------------
-    BACKEND_URL: HttpUrl
-
     # ---------------- Network & Timeout Configuration ----------------
     @property
-    def INTERNAL_TIMEOUT(self) -> float | None:
-        """ Timeout for internal microservice RPC (Frontend -> Backend)"""
-        return None if self.DEBUG_MODE else 1.0
-
-    @property
-    def EXTERNAL_TIMEOUT(self) -> float | None:
-        """ Timeout for external LLM Provider API requests"""
-        return None if self.DEBUG_MODE else 3.0
-
-    @property
     def STREAM_TIMEOUT(self) -> float | None:
-        """ Extended timeout for SSE streaming connections"""
+        """Extended timeout for Backend -> Agent streaming connections."""
         return None if self.DEBUG_MODE else 300.0
 
     # ---------------- Deterministic Paths (Cross-Platform) ----------------
     @property
     def db_dir(self) -> Path:
-        """ Absolute path to the database directory."""
-        return PROJECT_ROOT / "history"
+        """Absolute path to the database directory."""
+        return BACKEND_LAYER_ROOT / "history"
 
     @property
     def db_path(self) -> Path:

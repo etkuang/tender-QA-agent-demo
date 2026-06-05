@@ -16,8 +16,10 @@ class ChatRequest(BaseModel):
 
 
 class StreamChunk(BaseModel):
-    type: Literal["thinking", "text"]
+    type: Literal["thinking", "text", "error"]
     content: str
+    code: str | None = None
+    error_id: str | None = None
 
 
 class SessionMeta(BaseModel):

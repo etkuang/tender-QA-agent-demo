@@ -5,12 +5,9 @@ import uuid
 
 import streamlit as st
 
-from app_backend_layer.core.config import settings
 from app_frontend_layer.components.chat_view import render_chat
 from app_frontend_layer.components.sidebar import load_session, refresh_history, render_sidebar
 from app_frontend_layer.config import load_frontend_config
-
-BACKEND_URL = str(settings.BACKEND_URL).rstrip("/")
 
 
 def init_state():
@@ -37,7 +34,7 @@ def init_state():
 
 def main():
     """Application entry point."""
-    st.set_page_config(page_title="AI Inference Engine", layout="wide")
+    st.set_page_config(page_title="Bidding Assistant", layout="wide")
     init_state()
     render_sidebar()
     render_chat()

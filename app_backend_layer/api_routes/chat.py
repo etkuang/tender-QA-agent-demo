@@ -2,15 +2,17 @@
 # @Author: Wang Qingkang
 
 import json
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, messages_from_dict
 from langchain_openai import ChatOpenAI
+from openai import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
 
 from app_backend_layer.core.config import settings
-from app_backend_layer.core.logger import get_logger
+from common.logging import get_logger, get_request_id
 from app_backend_layer.history.history_db import HistoryManager
 from app_backend_layer.models.schemas import ChatRequest, StreamChunk
 
@@ -41,6 +43,10 @@ def get_db(request: Request) -> HistoryManager:
     return request.app.state.db
 
 
+def is_retryable_stream_error(err: Exception) -> bool:
+    return isinstance(err, (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError))
+
+
 @router.post("/stream")
 async def stream_chat(req: ChatRequest, db: HistoryManager = Depends(get_db)):
     try:
@@ -61,17 +67,13 @@ async def stream_chat(req: ChatRequest, db: HistoryManager = Depends(get_db)):
             base_url=agent_base_url,
             timeout=settings.STREAM_TIMEOUT,
             streaming=True,
+            extra_body={"metadata": {"session_id": req.session_id, "request_id": get_request_id()}},
         )
 
         async def generate_and_save():
             full_response = ""
-            full_reasoning = ""
             try:
                 await db.append_message(req.session_id, req.session_title, "human", req.prompt)
-
-                bootstrap = StreamChunk(type="thinking", content="Analyzing context and preparing answer...")
-                full_reasoning += bootstrap.content
-                yield f"{json.dumps(bootstrap.model_dump(), ensure_ascii=False)}\n".encode("utf-8")
 
                 async for chunk in llm.astream(context_window):
                     content = extract_text_from_chunk(chunk)
@@ -82,21 +84,25 @@ async def stream_chat(req: ChatRequest, db: HistoryManager = Depends(get_db)):
                     payload = StreamChunk(type="text", content=content)
                     yield f"{json.dumps(payload.model_dump(), ensure_ascii=False)}\n".encode("utf-8")
 
-                if full_reasoning:
-                    await db.append_message(req.session_id, req.session_title, "reasoning", full_reasoning)
                 await db.append_message(req.session_id, req.session_title, "ai", full_response)
+                logger.info("chat.stream finished | session_id=%s | response_chars=%s", req.session_id, len(full_response))
             except Exception as stream_err:
-                logger.exception("chat.stream failed | session_id=%s", req.session_id)
-                error_chunk = StreamChunk(
-                    type="text",
-                    content=f"\n\n[Streaming Pipeline Error: {type(stream_err).__name__}: {stream_err}]",
-                )
+                error_id = uuid.uuid4().hex[:8]
+                logger.exception("chat.stream failed | session_id=%s | error_id=%s", req.session_id, error_id)
+                if is_retryable_stream_error(stream_err):
+                    content = f"服务暂时不可用，请稍后重试。错误编号：{error_id}"
+                    code = "retryable_stream_error"
+                else:
+                    content = f"本次回答生成失败，系统已记录错误日志。错误编号：{error_id}"
+                    code = "internal_stream_error"
+                error_chunk = StreamChunk(type="error", content=content, code=code, error_id=error_id)
                 yield f"{json.dumps(error_chunk.model_dump(), ensure_ascii=False)}\n".encode("utf-8")
 
         return StreamingResponse(generate_and_save(), media_type="application/x-ndjson")
-    except Exception as err:
-        logger.exception("chat.stream init failed | session_id=%s", req.session_id)
+    except Exception:
+        error_id = uuid.uuid4().hex[:8]
+        logger.exception("chat.stream init failed | session_id=%s | error_id=%s", req.session_id, error_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Inference initialization pipeline crashed: {type(err).__name__}: {err}",
+            detail={"message": "Inference initialization pipeline crashed.", "error_id": error_id},
         )
