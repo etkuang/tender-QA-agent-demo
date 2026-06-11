@@ -17,22 +17,16 @@ class AppSettings(BaseSettings):
     Centralized Application Settings Management.
     Validates types and environments upon instantiation (Fail-Fast principle).
     """
-    # ---------------- Global Configuration ----------------
     ENV: str = "development"
     DEBUG_MODE: bool = False
 
-    # ---------------- Backend Infrastructure ----------------
     AGENT_BASE_URL: HttpUrl
-    AGENT_API_KEY: str = "tender-agent"
-    AGENT_MODEL_NAME: str = "tender-agent"
 
-    # ---------------- Network & Timeout Configuration ----------------
     @property
     def STREAM_TIMEOUT(self) -> float | None:
         """Extended timeout for Backend -> Agent streaming connections."""
         return None if self.DEBUG_MODE else 300.0
 
-    # ---------------- Deterministic Paths (Cross-Platform) ----------------
     @property
     def db_dir(self) -> Path:
         """Absolute path to the database directory."""

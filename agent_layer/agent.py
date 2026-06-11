@@ -1,4 +1,5 @@
 # coding: utf-8
+# @Author: Wang Qingkang
 
 import re
 import time
@@ -9,7 +10,7 @@ from agent_layer.chains import IntentChain, RagChain
 from agent_layer.config import build_chat_model, settings
 from agent_layer.prompts import LEGAL_AGENT_SYSTEM_PROMPT
 from agent_layer.retrieval import HybridRetriever, QuestionRewriter
-from agent_layer.state import AskResult
+from agent_layer.schemas import AskResult
 from agent_layer.tools import build_legal_tools
 
 
@@ -72,26 +73,26 @@ class LegalAgent:
         )
 
     @staticmethod
-    def _normalize_messages(messages: list[dict] | None, question: str) -> list[dict]:
-        if not messages:
-            return [{"role": "user", "content": question}]
+    def _normalize_messages(history_messages: list[dict] | None, user_message: str) -> list[dict]:
+        if not history_messages:
+            return [{"role": "user", "content": user_message}]
 
         output = []
-        for message in messages[-12:]:
+        for message in history_messages[-12:]:
             role = message.get("role")
             content = message.get("content", "")
             if role in {"system", "assistant", "user"} and isinstance(content, str) and content:
                 output.append({"role": role, "content": content})
 
         if not output or output[-1]["role"] != "user":
-            output.append({"role": "user", "content": question})
+            output.append({"role": "user", "content": user_message})
         else:
-            output[-1]["content"] = question
+            output[-1]["content"] = user_message
         return output
 
-    async def ainvoke(self, question: str, messages: list[dict] | None = None) -> str:
+    async def ainvoke(self, user_message: str, history_messages: list[dict] | None = None) -> str:
         result = await self.agent.ainvoke(
-            {"messages": self._normalize_messages(messages, question)},
+            {"messages": self._normalize_messages(history_messages, user_message)},
             config={"recursion_limit": settings.react_max_steps * 2 + 2},
         )
         final_message = result["messages"][-1]
@@ -108,32 +109,32 @@ class TenderAgentRuntime:
         self.agent = LegalAgent(self.retriever)
 
     @staticmethod
-    def _history_context(messages: list[dict] | None) -> str:
-        if not messages:
+    def _history_context(history_messages: list[dict] | None) -> str:
+        if not history_messages:
             return ""
 
         lines = []
-        for message in messages[-6:]:
+        for message in history_messages[-6:]:
             role = message.get("role")
             content = message.get("content", "")
             if role in {"user", "assistant"} and isinstance(content, str) and content:
                 lines.append(f"{role}: {content[:300]}")
         return "\n".join(lines)
 
-    async def ask(self, question: str, session_id: str = "", messages: list[dict] | None = None) -> AskResult:
+    async def ask(self, user_message: str, history_messages: list[dict] | None = None) -> AskResult:
         start = time.time()
-        rewritten = self.rewriter.rewrite(question)
+        rewritten_user_message = self.rewriter.rewrite(user_message)
 
-        quick = quick_response(rewritten)
+        quick = quick_response(rewritten_user_message)
         if quick:
             return AskResult(answer=quick, route="greeting", processing_time=time.time() - start)
 
-        if is_unrelated(rewritten):
+        if is_unrelated(rewritten_user_message):
             return AskResult(answer=settings.unrelated_response, route="rejected", processing_time=time.time() - start)
 
-        intent = await self.intent_chain.ainvoke(rewritten, self._history_context(messages))
+        intent = await self.intent_chain.ainvoke(rewritten_user_message, self._history_context(history_messages))
         if intent.complexity == "single_step":
-            rag_result = await self.rag_chain.ainvoke(rewritten)
+            rag_result = await self.rag_chain.ainvoke(rewritten_user_message)
             return AskResult(
                 answer=rag_result["answer"],
                 route="rag",
@@ -141,5 +142,5 @@ class TenderAgentRuntime:
                 sources=rag_result["sources"],
             )
 
-        answer = await self.agent.ainvoke(rewritten, messages)
+        answer = await self.agent.ainvoke(rewritten_user_message, history_messages)
         return AskResult(answer=answer, route="agent", processing_time=time.time() - start)

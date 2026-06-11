@@ -1,12 +1,13 @@
 # coding: utf-8
+# @Author: Wang Qingkang
 
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 
-from common.logging import get_logger
+from common.logger import get_logger
 from agent_layer.config import build_chat_model, settings
 from agent_layer.prompts import INTENT_PROMPT, RAG_PROMPT
 from agent_layer.retrieval import HybridRetriever, LegalRetrievalAdapter
-from agent_layer.state import IntentDecision
+from agent_layer.schemas import IntentDecision
 
 logger = get_logger("agent.chains")
 

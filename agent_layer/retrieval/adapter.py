@@ -1,4 +1,5 @@
 # coding: utf-8
+# @Author: Wang Qingkang
 
 from langchain_core.documents import Document
 

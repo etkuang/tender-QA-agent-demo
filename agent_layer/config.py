@@ -1,4 +1,5 @@
 # coding: utf-8
+# @Author: Wang Qingkang
 
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     """Agent layer runtime settings."""
 
     app_title: str = "Tender QA RAG Agent"
-    app_version: str = "0.3"
+    app_version: str = "0.4"
     app_description: str = "LangChain-based tender and bidding regulation assistant."
 
     llm_api_key: str = ""

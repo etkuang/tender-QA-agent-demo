@@ -1,4 +1,5 @@
 # coding: utf-8
+# @Author: Wang Qingkang
 
 import jieba
 from rank_bm25 import BM25Okapi

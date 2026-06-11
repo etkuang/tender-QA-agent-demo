@@ -1,4 +1,5 @@
 # coding: utf-8
+# @Author: Wang Qingkang
 
 from agent_layer.retrieval.adapter import LegalRetrievalAdapter
 from agent_layer.retrieval.bm25 import BM25Cache

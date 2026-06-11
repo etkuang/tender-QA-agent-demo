@@ -3,10 +3,12 @@
 .idea/
 agent_layer/data/model_cache
 agent_layer/data/databases
-app_backend_layer/history/
+app_backend_layer/history/history.db
 uv.lock
 codex_change_proposal.txt
 __pycache__/
 *.pyc
 .env
 logs/
+test.py
+deprecated_segments/

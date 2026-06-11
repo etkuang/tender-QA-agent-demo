@@ -1,11 +1,11 @@
 # coding: utf-8
 # @Author: Wang Qingkang
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from common.logging import get_logger
+from common.logger import get_logger
 from app_backend_layer.history.history_db import HistoryManager
-from app_backend_layer.models.schemas import DeleteSessionResponse, SessionMeta, StoredMessage
+from app_backend_layer.schemas import SessionMeta, StoredMessage
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 logger = get_logger("backend.sessions")
@@ -24,11 +24,11 @@ async def get_history_list(db: HistoryManager = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Database query failure.")
 
 
-@router.delete("/{session_id}", response_model=DeleteSessionResponse)
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(session_id: str, db: HistoryManager = Depends(get_db)):
     try:
         await db.delete_session(session_id)
-        return DeleteSessionResponse(ok=True, session_id=session_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception:
         logger.exception("sessions.delete failed | session_id=%s", session_id)
         raise HTTPException(status_code=500, detail="Database deletion failure.")

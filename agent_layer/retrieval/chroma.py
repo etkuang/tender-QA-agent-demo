@@ -1,9 +1,10 @@
 # coding: utf-8
+# @Author: Wang Qingkang
 
 import chromadb
 from chromadb.utils import embedding_functions
 
-from common.logging import get_logger
+from common.logger import get_logger
 from agent_layer.config import settings
 
 logger = get_logger("agent.retrieval.chroma")
