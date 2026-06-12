@@ -49,8 +49,4 @@ class ChineseNumberConverter:
         chinese_match = re.search(r"第\s*([零〇一二两三四五六七八九十百千]+)\s*条", text)
         if chinese_match:
             return self.to_arabic(chinese_match.group(1))
-
-        loose_match = re.search(r"\d+", text)
-        if loose_match:
-            return loose_match.group(0)
         return ""
