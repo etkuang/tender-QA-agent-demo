@@ -1,6 +1,5 @@
 # coding: utf-8
 
-import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable

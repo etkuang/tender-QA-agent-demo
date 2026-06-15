@@ -3,7 +3,7 @@
 import re
 import time
 
-from common.knowledge_base_schemas import KnowledgeSearchRequest
+from common.api_contracts.knowledge_base_api import KnowledgeSearchRequest
 from common.logger import get_logger
 from agent_layer.config import Settings
 from agent_layer.errors import PolicyRetrievalError

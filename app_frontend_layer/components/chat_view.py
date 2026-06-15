@@ -3,9 +3,10 @@
 
 import streamlit as st
 
-from common.logger import get_logger
+from common.api_contracts.backend_api import ChatRequest, StreamChunk
 from app_frontend_layer.api_client import request_chat_stream
 from app_frontend_layer.components.sidebar import refresh_history
+from common.logger import get_logger
 
 frontend_logger = get_logger("frontend.chat")
 
@@ -50,32 +51,31 @@ def render_chat():
             full_reasoning = ""
             full_error = ""
 
-            payload = {
-                "session_id": st.session_state.session_id,
-                "session_title": st.session_state.session_title,
-                "user_message": user_message
-            }
+            payload = ChatRequest(
+                session_id=st.session_state.session_id,
+                session_title=st.session_state.session_title,
+                user_message=user_message,
+            )
 
-            def handle_stream_payload(stream_payload: dict) -> None:
+            def handle_stream_payload(stream_payload: StreamChunk) -> None:
                 nonlocal full_response, full_reasoning, full_error, status_container, status_placeholder
 
-                match stream_payload:
-                    case {"type": "reasoning", "content": str(chunk_content)}:
-                        full_reasoning += chunk_content
-                        if status_container is None:
-                            status_container = st.status("🧠 Model is thinking...", expanded=True)
-                            status_placeholder = status_container.empty()
-                        status_placeholder.markdown(full_reasoning + "▌")
-                    case {"type": "assistant", "content": str(chunk_content)}:
-                        if status_container is not None and getattr(status_container, "_state", "") != "complete":
-                            status_placeholder.markdown(full_reasoning)
-                            status_container.update(label="🧠 Show Thinking", state="complete", expanded=False)
-                        full_response += chunk_content
-                        response_placeholder.markdown(full_response + "▌")
-                    case {"type": "error", "content": str(error_content)}:
-                        full_error += error_content
-                        frontend_logger.warning("Stream error received | content=%s", error_content)
-                        st.error(error_content)
+                if stream_payload.type == "reasoning":
+                    full_reasoning += stream_payload.content
+                    if status_container is None:
+                        status_container = st.status("🧠 Model is thinking...", expanded=True)
+                        status_placeholder = status_container.empty()
+                    status_placeholder.markdown(full_reasoning + "▌")
+                elif stream_payload.type == "assistant":
+                    if status_container is not None and getattr(status_container, "_state", "") != "complete":
+                        status_placeholder.markdown(full_reasoning)
+                        status_container.update(label="🧠 Show Thinking", state="complete", expanded=False)
+                    full_response += stream_payload.content
+                    response_placeholder.markdown(full_response + "▌")
+                elif stream_payload.type == "error":
+                    full_error += stream_payload.content
+                    frontend_logger.warning("Stream error received | content=%s", stream_payload.content)
+                    st.error(stream_payload.content)
 
             result = request_chat_stream(payload, handle_stream_payload)
             if result["ok"]:

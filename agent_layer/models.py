@@ -1,10 +1,8 @@
 # coding: utf-8
 
-from typing import Protocol
-
 from langchain_openai import ChatOpenAI
 
-
+from agent_layer.config import Settings
 
 
 class ModelFactory:

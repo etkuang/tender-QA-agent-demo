@@ -7,10 +7,11 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from common.api_contracts.agent_api import AgentStreamRequest, AgentTransportChunk, Message
+from common.api_contracts.backend_api import ChatRequest, StreamChunk
 from app_backend_layer.config import settings
-from common.logger import get_logger, get_request_id, reset_request_id, set_request_id
 from app_backend_layer.history.history_db import HistoryManager
-from app_backend_layer.schemas import ChatRequest, StreamChunk
+from common.logger import get_logger, get_request_id, reset_request_id, set_request_id
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = get_logger("backend.chat")
@@ -39,14 +40,14 @@ async def stream_chat(req: ChatRequest, db: HistoryManager = Depends(get_db)):
     logger.info("chat.stream start | session_id=%s", req.session_id)
 
     history_messages = await db.load_messages(req.session_id)
-    agent_payload = {
-        "user_message": req.user_message,
-        "history_messages": [
-            {"role": message["type"], "content": message["content"]}
+    agent_request = AgentStreamRequest(
+        user_message=req.user_message,
+        history_messages=[
+            Message(role=message["type"], content=message["content"])
             for message in history_messages
             if message["type"] in {"user", "assistant"}
         ],
-    }
+    )
 
     async def generate_and_save():
         token = set_request_id(request_id)
@@ -60,20 +61,21 @@ async def stream_chat(req: ChatRequest, db: HistoryManager = Depends(get_db)):
                 async with client.stream(
                     "POST",
                     f"{settings.AGENT_BASE_URL}chat/stream",
-                    json=agent_payload,
+                    json=agent_request.model_dump(mode="json"),
                     headers={"X-Request-ID": request_id},
                 ) as response:
                     response.raise_for_status()
 
                     async for line in response.aiter_lines():
-                        payload = StreamChunk.model_validate_json(line)
-                        if payload.type == "reasoning":
-                            full_reasoning += payload.content
-                        elif payload.type == "assistant":
-                            full_response += payload.content
-                        elif payload.type == "error":
-                            full_error += payload.content
-                        yield f"{json.dumps(payload.model_dump(), ensure_ascii=False)}\n".encode("utf-8")
+                        agent_chunk = AgentTransportChunk.model_validate_json(line)
+                        if agent_chunk.type == "reasoning":
+                            full_reasoning += agent_chunk.content
+                        elif agent_chunk.type == "assistant":
+                            full_response += agent_chunk.content
+                        elif agent_chunk.type == "error":
+                            full_error += agent_chunk.content
+                        backend_chunk = StreamChunk.model_validate(agent_chunk.model_dump())
+                        yield f"{json.dumps(backend_chunk.model_dump(), ensure_ascii=False)}\n".encode("utf-8")
 
             if full_reasoning:
                 await db.append_message(req.session_id, req.session_title, "reasoning", full_reasoning)

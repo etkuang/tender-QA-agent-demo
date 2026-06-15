@@ -1,7 +1,7 @@
 # coding: utf-8
 # @Author: Wang Qingkang
 
-from common.knowledge_base_schemas import KnowledgeHit, KnowledgeSearchRequest, KnowledgeSearchResponse
+from common.api_contracts.knowledge_base_api import KnowledgeHit, KnowledgeSearchRequest, KnowledgeSearchResponse
 from knowledge_base_layer.config import Settings
 from knowledge_base_layer.retrieval.parent_context import ParentContextExpander
 from knowledge_base_layer.retrieval.reranker import Reranker

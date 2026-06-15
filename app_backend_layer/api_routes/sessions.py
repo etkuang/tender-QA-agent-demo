@@ -3,9 +3,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from common.logger import get_logger
+from common.api_contracts.backend_api import SessionMeta, StoredMessage
 from app_backend_layer.history.history_db import HistoryManager
-from app_backend_layer.schemas import SessionMeta, StoredMessage
+from common.logger import get_logger
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 logger = get_logger("backend.sessions")

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException
 
-from common.knowledge_base_schemas import KnowledgeSearchRequest, KnowledgeSearchResponse
+from common.api_contracts.knowledge_base_api import KnowledgeSearchRequest, KnowledgeSearchResponse
 from common.logger import reset_request_id, set_request_id
 from knowledge_base_layer.bootstrap import build_service
 from knowledge_base_layer.config import settings

@@ -1,15 +1,16 @@
 # coding: utf-8
 # @Author: Wang Qingkang
 
-import json
 import uuid
 from functools import wraps
 
 import requests
+from pydantic import ValidationError
 from requests.exceptions import ConnectionError, HTTPError, RequestException, Timeout
 
-from common.logger import get_logger, reset_request_id, set_request_id
+from common.api_contracts.backend_api import ChatRequest, SessionMeta, StoredMessage, StreamChunk
 from app_frontend_layer.config import settings
+from common.logger import get_logger, reset_request_id, set_request_id
 
 BACKEND_URL = settings.BACKEND_URL.rstrip("/")
 RETRYABLE_STATUS_CODES = {502, 503, 504}
@@ -49,6 +50,9 @@ def with_request_context(func):
         except RequestException:
             logger.warning("%s request error", func.__name__, exc_info=True)
             return request_error(request_id)
+        except ValidationError:
+            logger.warning("%s response validation error", func.__name__, exc_info=True)
+            return request_error(request_id)
         finally:
             reset_request_id(token)
 
@@ -63,7 +67,8 @@ def request_session_messages(session_id: str, *, request_id: str) -> dict:
         headers={"X-Request-ID": request_id},
     )
     response.raise_for_status()
-    return request_success(response.json())
+    messages = [StoredMessage.model_validate(item) for item in response.json()]
+    return request_success([message.model_dump(mode="json") for message in messages])
 
 
 @with_request_context
@@ -74,7 +79,8 @@ def request_history_list(*, request_id: str) -> dict:
         headers={"X-Request-ID": request_id},
     )
     response.raise_for_status()
-    return request_success(response.json())
+    sessions = [SessionMeta.model_validate(item) for item in response.json()]
+    return request_success([session.model_dump(mode="json") for session in sessions])
 
 
 @with_request_context
@@ -89,10 +95,10 @@ def request_delete_session(session_id: str, *, request_id: str) -> dict:
 
 
 @with_request_context
-def request_chat_stream(payload: dict, on_payload, *, request_id: str) -> dict:
+def request_chat_stream(payload: ChatRequest, on_payload, *, request_id: str) -> dict:
     with requests.post(
         f"{BACKEND_URL}/chat/stream",
-        json=payload,
+        json=payload.model_dump(mode="json"),
         stream=True,
         timeout=settings.STREAM_TIMEOUT,
         headers={"X-Request-ID": request_id},
@@ -101,8 +107,8 @@ def request_chat_stream(payload: dict, on_payload, *, request_id: str) -> dict:
 
         for line in response.iter_lines(decode_unicode=True):
             try:
-                on_payload(json.loads(line))
-            except json.JSONDecodeError:
-                logger.warning("NDJSON parse failure | malformed_fragment=%r", line[:200], exc_info=True)
+                on_payload(StreamChunk.model_validate_json(line))
+            except ValidationError:
+                logger.warning("NDJSON validation failure | malformed_fragment=%r", line[:200], exc_info=True)
 
     return request_success(True)

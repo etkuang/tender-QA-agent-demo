@@ -23,6 +23,7 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "requests>=2.34.2",
     "sentence-transformers>=5.5.1",
+    "sqlglot>=26.0.0",
     "streamlit>=1.57.0",
     "uvicorn>=0.48.0",
 ]

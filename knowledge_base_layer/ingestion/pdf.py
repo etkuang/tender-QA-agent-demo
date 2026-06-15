@@ -99,17 +99,16 @@ class PolicyPdfLoader:
                     "validity_status": "source_snapshot",
                 }
             )
-            parent, parent_issues = self.normalizer.normalize(parent_id, content, metadata, data_version)
-            if not any(issue.critical for issue in parent_issues):
-                chunks.append(parent)
+            parent, _ = self.normalizer.normalize(parent_id, content, metadata, data_version)
+            chunks.append(parent)
             for index, child_text in enumerate(
-                self._split(content, self.settings.policy_child_chunk_size, self.settings.policy_child_chunk_overlap)
+                    self._split(content, self.settings.policy_child_chunk_size,
+                                self.settings.policy_child_chunk_overlap)
             ):
                 child_metadata = {**metadata, "chunk_type": "child", "parent_id": parent_id}
                 child_id = f"{parent_id}-child-{index}"
-                child, child_issues = self.normalizer.normalize(child_id, child_text, child_metadata, data_version)
-                if not any(issue.critical for issue in child_issues):
-                    chunks.append(child)
+                child, _ = self.normalizer.normalize(child_id, child_text, child_metadata, data_version)
+                chunks.append(child)
 
         for page in pages:
             for line in (item.strip() for item in page.text.splitlines() if item.strip()):
@@ -146,9 +145,8 @@ class PolicyPdfLoader:
                 self._split(page.text, self.settings.pdf_chunk_size, self.settings.pdf_chunk_overlap)
             ):
                 record_id = self._stable_id(source.path, page.page_number, index, content)
-                chunk, issues = self.normalizer.normalize(record_id, content, metadata, data_version)
-                if not any(issue.critical for issue in issues):
-                    chunks.append(chunk)
+                chunk, _ = self.normalizer.normalize(record_id, content, metadata, data_version)
+                chunks.append(chunk)
         return chunks
 
     @staticmethod

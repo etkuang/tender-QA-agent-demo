@@ -18,7 +18,7 @@ class RetrievalEvaluation(BaseModel):
     failures: list[str]
 
 
-def evaluate_retrieval(
+async def evaluate_retrieval(
     pipeline: RetrievalPipeline,
     samples: list[RetrievalSample],
 ) -> RetrievalEvaluation:
@@ -26,7 +26,7 @@ def evaluate_retrieval(
     reciprocal_rank_sum = 0.0
     failures = []
     for sample in samples:
-        result = pipeline.retrieve_policy(sample.question)
+        result = await pipeline.retrieve_policy(sample.question)
         returned_ids = [evidence.document_id for evidence in result.evidence]
         expected = set(sample.expected_document_ids)
         hits = expected.intersection(returned_ids)

@@ -6,10 +6,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from common.logger import get_logger, reset_request_id, set_request_id
+from common.api_contracts.agent_api import AgentStreamRequest, AgentTransportChunk
 from agent_layer.bootstrap import build_application
 from agent_layer.config import settings
-from agent_layer.schemas import AgentStreamRequest, AgentTransportChunk, StreamEvent, StreamEventType
+from agent_layer.schemas import StreamEvent, StreamEventType
+from common.logger import get_logger, reset_request_id, set_request_id
 
 logger = get_logger("agent.api")
 

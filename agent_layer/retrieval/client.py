@@ -3,7 +3,7 @@
 
 import httpx
 
-from common.knowledge_base_schemas import KnowledgeSearchRequest, KnowledgeSearchResponse
+from common.api_contracts.knowledge_base_api import KnowledgeSearchRequest, KnowledgeSearchResponse
 from common.logger import get_request_id
 from agent_layer.config import Settings
 
