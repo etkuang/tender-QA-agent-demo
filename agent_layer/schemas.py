@@ -275,6 +275,13 @@ class StreamEvent(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentTransportChunk(BaseModel):
+    type: Literal["assistant", "reasoning", "error"]
+    content: str
+    code: str | None = None
+    error_id: str | None = None
+
+
 class AskResult(BaseModel):
     answer: str
     route: str

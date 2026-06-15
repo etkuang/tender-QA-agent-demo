@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
@@ -44,6 +45,8 @@ from agent_layer.workflows.common import (
 )
 
 logger = get_logger("agent.workflows.data_domain")
+
+ProgressCallback = Callable[[ToolEvent], Awaitable[None]]
 
 
 RESEARCH_PLAN_PROMPT = ChatPromptTemplate.from_messages(
@@ -169,6 +172,7 @@ class DataDomainWorkflow:
         secondary_categories: list[Category],
         requires_fresh_data: bool,
         runtime_context: SessionContext,
+        progress_callback: ProgressCallback | None = None,
     ) -> WorkflowResult:
         run_id = uuid.uuid4().hex
         session_id = runtime_context.session_id or ""
@@ -178,6 +182,14 @@ class DataDomainWorkflow:
                 allowed_categories.append(category)
         allowed_profiles = [self.profiles[category] for category in allowed_categories]
 
+        await self._report(
+            ToolEvent(
+                stage="research_plan",
+                status="started",
+                summary="正在把问题拆分为可核验的数据查询步骤。",
+            ),
+            progress_callback,
+        )
         plan_started = time.perf_counter()
         plan = await self.planner.plan(
             question,
@@ -186,15 +198,26 @@ class DataDomainWorkflow:
             entities,
             requires_fresh_data,
         )
-        events = [
-            ToolEvent(
+        plan_event = ToolEvent(
                 stage="research_plan",
                 status="completed",
                 summary=f"已生成 {len(plan.tasks)} 个受控研究任务。",
                 duration_ms=(time.perf_counter() - plan_started) * 1000,
-                details={"task_ids": [task.task_id for task in plan.tasks], "run_id": run_id},
+                details={
+                    "task_ids": [task.task_id for task in plan.tasks],
+                    "tasks": [
+                        {
+                            "goal": task.goal,
+                            "source": task.preferred_source,
+                            "domain": (task.domain or self.profile.category).value,
+                        }
+                        for task in plan.tasks
+                    ],
+                    "run_id": run_id,
+                },
             )
-        ]
+        events = [plan_event]
+        await self._report(plan_event, progress_callback)
         if self.checkpoint_store is not None:
             await self.checkpoint_store.save(
                 run_id,
@@ -208,6 +231,7 @@ class DataDomainWorkflow:
             run_id,
             session_id,
             runtime_context,
+            progress_callback,
         )
         events.extend(execution_events)
         evidence = rank_evidence(evidence)
@@ -223,6 +247,14 @@ class DataDomainWorkflow:
                 run_id=run_id,
             )
 
+        await self._report(
+            ToolEvent(
+                stage="domain_synthesis",
+                status="started",
+                summary="数据和资料已经汇总，正在核对统计口径、缺失项和引用。",
+            ),
+            progress_callback,
+        )
         answer_started = time.perf_counter()
         citations = build_citations(evidence)
         answer_input = {
@@ -241,15 +273,15 @@ class DataDomainWorkflow:
         if not citations_are_valid(answer, len(citations)):
             raise CitationValidationError
         answer = ensure_source_section(answer, citations)
-        events.append(
-            ToolEvent(
+        synthesis_event = ToolEvent(
                 stage="domain_synthesis",
                 status="completed",
                 summary=f"{self.profile.display_name}证据合成完成。",
                 duration_ms=(time.perf_counter() - answer_started) * 1000,
                 details={"citation_count": len(citations)},
             )
-        )
+        events.append(synthesis_event)
+        await self._report(synthesis_event, progress_callback)
         if self.checkpoint_store is not None:
             await self.checkpoint_store.delete(run_id)
         return WorkflowResult(
@@ -268,6 +300,7 @@ class DataDomainWorkflow:
         run_id: str,
         session_id: str,
         runtime_context: SessionContext,
+        progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
         pending = {task.task_id: task for task in plan.tasks}
         completed = set()
@@ -279,7 +312,16 @@ class DataDomainWorkflow:
             if not ready:
                 raise PlanningError
             results = await asyncio.gather(
-                *(self._execute_task(task, plan, allowed_categories, runtime_context) for task in ready)
+                *(
+                    self._execute_task(
+                        task,
+                        plan,
+                        allowed_categories,
+                        runtime_context,
+                        progress_callback,
+                    )
+                    for task in ready
+                )
             )
             for task, result in zip(ready, results, strict=True):
                 task_evidence, task_events, task_errors = result
@@ -307,20 +349,32 @@ class DataDomainWorkflow:
         plan: ResearchPlan,
         allowed_categories: list[Category],
         runtime_context: SessionContext,
+        progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
         category = task.domain or self.profile.category
         if category not in allowed_categories:
             raise PlanningError
         profile = self.profiles[category]
+        await self._report(
+            ToolEvent(
+                stage=task.task_id,
+                status="started",
+                summary=f"正在处理查询任务：{task.goal}",
+                details={"domain": category.value, "source": task.preferred_source},
+            ),
+            progress_callback,
+        )
         jobs = []
         if task.preferred_source in {"sql", "both"}:
-            jobs.append(self._execute_sql(task, profile, runtime_context))
+            jobs.append(self._execute_sql(task, profile, runtime_context, progress_callback))
         if task.preferred_source in {"website", "both"}:
-            jobs.append(self._execute_web(task, plan, profile, runtime_context))
+            jobs.append(self._execute_web(task, plan, profile, runtime_context, progress_callback))
         if profile.local_collection and self.retrieval is not None:
-            jobs.append(self._execute_local(task, profile))
+            jobs.append(self._execute_local(task, profile, progress_callback))
         if not jobs:
-            return [], [ToolEvent(stage=task.task_id, status="skipped", summary="该任务没有可用执行器。")], []
+            event = ToolEvent(stage=task.task_id, status="skipped", summary="该查询任务没有可用的数据来源。")
+            await self._report(event, progress_callback)
+            return [], [event], []
         results = await asyncio.gather(*jobs)
         evidence = []
         events = []
@@ -329,6 +383,14 @@ class DataDomainWorkflow:
             evidence.extend(job_evidence)
             events.extend(job_events)
             errors.extend(job_errors)
+        await self._report(
+            ToolEvent(
+                stage=task.task_id,
+                status="completed",
+                summary=f"查询任务已完成：{task.goal}，获得 {len(evidence)} 条可用资料。",
+            ),
+            progress_callback,
+        )
         return evidence, events, errors
 
     async def _execute_sql(
@@ -336,17 +398,28 @@ class DataDomainWorkflow:
         task: ResearchTask,
         profile: DomainProfile,
         runtime_context: SessionContext,
+        progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
         if self.sql_gateway is None:
-            return [], [ToolEvent(stage="sql", status="skipped", summary="只读 SQL Gateway 尚未配置。")], []
+            event = ToolEvent(stage="sql", status="skipped", summary="结构化数据库查询尚未配置，本次跳过。")
+            await self._report(event, progress_callback)
+            return [], [event], []
+        await self._report(
+            ToolEvent(stage="sql", status="started", summary="正在通过只读查询获取结构化数据。"),
+            progress_callback,
+        )
         started = time.perf_counter()
         try:
             result = await self.sql_gateway.execute(task, profile.sql_views, runtime_context)
         except AgentError as exc:
-            return [], [ToolEvent(stage="sql", status="failed", summary=exc.user_message)], [exc]
+            event = ToolEvent(stage="sql", status="failed", summary=exc.user_message)
+            await self._report(event, progress_callback)
+            return [], [event], [exc]
         except Exception:
             logger.warning("domain SQL gateway failed | task_id=%s", task.task_id, exc_info=True)
-            return [], [ToolEvent(stage="sql", status="failed", summary="结构化数据查询失败。")], []
+            event = ToolEvent(stage="sql", status="failed", summary="结构化数据查询失败。")
+            await self._report(event, progress_callback)
+            return [], [event], []
         analysis = self.analyzer.analyze(result, profile.analysis_template)
         evidence = self.adapter.from_data_result(
             result,
@@ -361,6 +434,7 @@ class DataDomainWorkflow:
             duration_ms=(time.perf_counter() - started) * 1000,
             details={"query_id": result.query_id, "row_count": result.row_count},
         )
+        await self._report(event, progress_callback)
         return [evidence], [event], []
 
     async def _execute_web(
@@ -369,10 +443,17 @@ class DataDomainWorkflow:
         plan: ResearchPlan,
         profile: DomainProfile,
         runtime_context: SessionContext,
+        progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
         clients = [self.website_clients[name] for name in profile.website_adapters if name in self.website_clients]
         if not clients:
-            return [], [ToolEvent(stage="website", status="skipped", summary="指定网站适配器尚未配置。")], []
+            event = ToolEvent(stage="website", status="skipped", summary="指定网站数据源尚未配置，本次跳过。")
+            await self._report(event, progress_callback)
+            return [], [event], []
+        await self._report(
+            ToolEvent(stage="website", status="started", summary="正在查询已配置的网站数据源。"),
+            progress_callback,
+        )
         query = WebsiteQuery(
             query=task.goal,
             category=profile.category,
@@ -400,13 +481,19 @@ class DataDomainWorkflow:
             summary=f"网站检索确认 {len(evidence)} 条证据，失败适配器 {failures} 个。",
             duration_ms=(time.perf_counter() - started) * 1000,
         )
+        await self._report(event, progress_callback)
         return evidence, [event], []
 
     async def _execute_local(
         self,
         task: ResearchTask,
         profile: DomainProfile,
+        progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
+        await self._report(
+            ToolEvent(stage="local_domain_retrieve", status="started", summary="正在本地资料库中查找相关历史记录。"),
+            progress_callback,
+        )
         try:
             result = await asyncio.to_thread(
                 self.retrieval.retrieve_domain,
@@ -416,8 +503,17 @@ class DataDomainWorkflow:
             )
         except Exception:
             logger.warning("Milvus domain retrieval failed | task_id=%s", task.task_id, exc_info=True)
-            return [], [ToolEvent(stage="local_domain_retrieve", status="failed", summary="Milvus 领域检索失败。")], []
+            event = ToolEvent(stage="local_domain_retrieve", status="failed", summary="本地资料库查询失败。")
+            await self._report(event, progress_callback)
+            return [], [event], []
+        for event in result.events:
+            await self._report(event, progress_callback)
         return result.evidence, result.events, []
+
+    @staticmethod
+    async def _report(event: ToolEvent, progress_callback: ProgressCallback | None) -> None:
+        if progress_callback is not None:
+            await progress_callback(event)
 
     async def _generate_answer(self, answer_input: dict) -> str:
         try:

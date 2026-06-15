@@ -14,7 +14,7 @@ class WorkflowRouter:
                 category=classification.category,
                 workflow="general",
                 action="general_answer",
-                reason="问题被分类为通用问题，不调用专业数据工具。",
+                reason="这是一个通用问题，不需要查询招投标专业数据源，我会直接回答。",
             )
 
         if classification.confidence < self.settings.routing_confidence_low:
@@ -22,7 +22,7 @@ class WorkflowRouter:
                 category=classification.category,
                 workflow=classification.category.value,
                 action="clarify",
-                reason="分类置信度低，需要用户明确主要查询目标。",
+                reason="我还不能可靠判断您主要想查询哪类信息，需要先请您明确查询目标。",
             )
 
         if (
@@ -33,14 +33,14 @@ class WorkflowRouter:
                 category=classification.category,
                 workflow=classification.category.value,
                 action="clarify",
-                reason="问题涉及多个接近的业务类别，需要确认主要诉求。",
+                reason="这个问题同时涉及多个业务方向，需要先确认您最关心的结论。",
             )
 
         return RouteDecision(
             category=classification.category,
             workflow=classification.category.value,
             action="execute",
-            reason="分类结果达到执行阈值。",
+            reason="问题类型已经比较明确，我会按对应的专业流程继续查询和核验。",
         )
 
     @staticmethod

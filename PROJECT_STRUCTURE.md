@@ -43,7 +43,7 @@ Agent 层当前覆盖政策、招投标、舆情、公司、价格、产品和�
 - `errors.py`：稳定错误类型及外部模型/网络异常映射。
 - `checkpoint.py`：独立于聊天历史的 SQLite 执行检查点。
 
-Agent 输出事件包括：`route`、`progress`、`reasoning_summary`、`source`、`assistant_delta`、`final`、`error`。不再提供旧的 `single_step`、`multi_step` 或旧 Agent chunk 兼容协议。
+Agent 内部事件包括：`route`、`progress`、`reasoning_summary`、`source`、`assistant_delta`、`final`、`error`。`api.py` 在 HTTP 边界将这些内部事件整理为 Backend 现有契约支持的 `reasoning`、`assistant`、`error`，其中用户可读的处理过程通过 `reasoning` 实时传递。
 
 ### 4.2 分类和上下文
 
@@ -128,4 +128,4 @@ Frontend 仍属于旧实现范围，本次未修改。
 3. Embedding 维度必须与 Milvus collection schema 一致，默认维度为 768。
 4. SQL 能力需要安装 `sqlglot`，并注入只读执行器和审计落地实现。
 5. 网站和政策互联网能力需要注入具体适配器；未配置时不会虚构外部检索结果。
-6. Agent 新协议已是目标协议，Backend/Frontend 后续必须按该协议升级，不能依赖旧 Agent 事件。
+6. Agent 内部使用结构化事件，HTTP 输出保持 Backend 当前的三类流消息契约。

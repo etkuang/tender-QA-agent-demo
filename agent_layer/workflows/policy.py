@@ -1,7 +1,9 @@
 # coding: utf-8
 
+import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 from urllib.parse import urlparse
 
 from langchain_core.language_models import BaseChatModel
@@ -39,6 +41,8 @@ from agent_layer.workflows.common import (
 )
 
 logger = get_logger("agent.workflows.policy")
+
+ProgressCallback = Callable[[ToolEvent], Awaitable[None]]
 
 
 POLICY_ASSESSMENT_PROMPT = ChatPromptTemplate.from_messages(
@@ -174,48 +178,110 @@ class PolicyWorkflow:
         original_question: str,
         standalone_question: str,
         runtime_context: SessionContext,
+        progress_callback: ProgressCallback | None = None,
     ) -> WorkflowResult:
+        events = []
+        await self._record_event(
+            events,
+            ToolEvent(
+                stage="policy_parse",
+                status="started",
+                summary="正在识别问题中的法规名称、条款、地区和时间范围。",
+            ),
+            progress_callback,
+        )
         parse_started = time.perf_counter()
         policy_query = await self.query_parser.parse(standalone_question)
-        retrieval_output = self.retrieval.retrieve_policy(standalone_question, policy_query)
-        evidence = retrieval_output.evidence
-        events = [
+        await self._record_event(
+            events,
             ToolEvent(
                 stage="policy_parse",
                 status="completed",
-                summary="政策实体、条款、地域和历史时点解析完成。",
+                summary="政策查询条件已经识别完成。",
                 duration_ms=(time.perf_counter() - parse_started) * 1000,
                 details=policy_query.model_dump(mode="json"),
             ),
-            *retrieval_output.events,
-        ]
+            progress_callback,
+        )
+        await self._record_event(
+            events,
+            ToolEvent(
+                stage="policy_retrieve",
+                status="started",
+                summary="正在本地政策资料库中查找对应法规和完整条款。",
+            ),
+            progress_callback,
+        )
+        retrieval_output = await asyncio.to_thread(
+            self.retrieval.retrieve_policy,
+            standalone_question,
+            policy_query,
+        )
+        evidence = retrieval_output.evidence
+        for event in retrieval_output.events:
+            if event.status != "started":
+                await self._record_event(events, event, progress_callback)
         evidence_text = format_evidence(evidence, self.settings.summarize_chunk_length)
 
+        await self._record_event(
+            events,
+            ToolEvent(
+                stage="policy_assessment",
+                status="started",
+                summary="正在检查找到的资料是否足以回答问题，以及法规是否存在时效或地域限制。",
+            ),
+            progress_callback,
+        )
         assessment_started = time.perf_counter()
         assessment = await self.assessment.assess(standalone_question, evidence_text, len(evidence))
-        events.append(
+        await self._record_event(
+            events,
             ToolEvent(
                 stage="policy_assessment",
                 status="completed",
-                summary="本地证据充分性评估完成。",
+                summary=(
+                    "本地资料已经足以支持回答。"
+                    if assessment.sufficient
+                    else "本地资料仍有缺口，正在判断是否需要补充官方来源。"
+                ),
                 duration_ms=(time.perf_counter() - assessment_started) * 1000,
                 details=assessment.model_dump(),
-            )
+            ),
+            progress_callback,
         )
 
         if not assessment.sufficient:
+            await self._record_event(
+                events,
+                ToolEvent(
+                    stage="policy_internet",
+                    status="started",
+                    summary="本地资料存在缺口，正在尝试从官方来源补充核验。",
+                ),
+                progress_callback,
+            )
             internet_evidence, internet_events = await self._search_internet(
                 standalone_question,
                 assessment,
                 runtime_context,
             )
             evidence.extend(internet_evidence)
-            events.extend(internet_events)
+            for event in internet_events:
+                await self._record_event(events, event, progress_callback)
 
         evidence = rank_evidence(evidence)
         if not evidence:
             return WorkflowResult(answer=self.settings.no_results_response, tool_events=events, model_calls=2)
 
+        await self._record_event(
+            events,
+            ToolEvent(
+                stage="policy_synthesis",
+                status="started",
+                summary="正在根据已核验的法规资料组织结论，并检查每项关键结论的引用。",
+            ),
+            progress_callback,
+        )
         answer_started = time.perf_counter()
         citations = build_citations(evidence)
         answer_input = {
@@ -234,14 +300,16 @@ class PolicyWorkflow:
         if not citations_are_valid(answer, len(citations)):
             raise CitationValidationError
         answer = ensure_source_section(answer, citations)
-        events.append(
+        await self._record_event(
+            events,
             ToolEvent(
                 stage="policy_synthesis",
                 status="completed",
                 summary="政策证据合成与引用校验完成。",
                 duration_ms=(time.perf_counter() - answer_started) * 1000,
                 details={"citation_count": len(citations)},
-            )
+            ),
+            progress_callback,
         )
         return WorkflowResult(
             answer=answer,
@@ -250,6 +318,16 @@ class PolicyWorkflow:
             tool_events=events,
             model_calls=model_calls,
         )
+
+    @staticmethod
+    async def _record_event(
+        events: list[ToolEvent],
+        event: ToolEvent,
+        progress_callback: ProgressCallback | None,
+    ) -> None:
+        events.append(event)
+        if progress_callback is not None:
+            await progress_callback(event)
 
     async def _search_internet(
         self,

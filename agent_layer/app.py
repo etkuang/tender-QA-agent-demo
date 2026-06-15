@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import asyncio
 import re
 import time
 from collections.abc import AsyncIterator
@@ -62,6 +63,11 @@ class TenderQAApplication:
         route = None
         classification_duration_ms = 0.0
         try:
+            if options.include_progress:
+                yield StreamEvent(
+                    type=StreamEventType.PROGRESS,
+                    content="正在理解您的问题，并结合最近的对话确认查询对象。",
+                )
             conversation = await self.dependencies.context_resolver.resolve(user_message, history, context)
             quick = self._quick_response(conversation.standalone_question)
             if quick:
@@ -105,6 +111,11 @@ class TenderQAApplication:
                 )
                 return
 
+            if options.include_progress:
+                yield StreamEvent(
+                    type=StreamEventType.PROGRESS,
+                    content="问题含义已经确认，正在判断应由哪个专业模块处理。",
+                )
             classification_started = time.perf_counter()
             classification = await self.dependencies.classifier.classify(
                 conversation.standalone_question,
@@ -148,6 +159,11 @@ class TenderQAApplication:
                 return
 
             if route.action == "general_answer":
+                if options.include_progress:
+                    yield StreamEvent(
+                        type=StreamEventType.PROGRESS,
+                        content="这是通用问题，不需要查询专业数据库，正在直接组织回答。",
+                    )
                 answer = await self.dependencies.general_workflow.run(
                     conversation.original_question,
                     self.dependencies.context_resolver.context_summary(conversation),
@@ -171,29 +187,45 @@ class TenderQAApplication:
                     type=StreamEventType.PROGRESS,
                     content=f"正在执行{self._category_label(classification.category)}工作流。",
                 )
+            progress_queue = asyncio.Queue()
+            progress_callback = progress_queue.put if options.include_progress else None
             if classification.category == Category.POLICY:
-                result = await self.dependencies.policy_workflow.run(
-                    conversation.original_question,
-                    conversation.standalone_question,
-                    context,
+                workflow_task = asyncio.create_task(
+                    self.dependencies.policy_workflow.run(
+                        conversation.original_question,
+                        conversation.standalone_question,
+                        context,
+                        progress_callback,
+                    )
                 )
             else:
                 workflow = self.dependencies.data_workflows[classification.category]
-                result = await workflow.run(
-                    conversation.standalone_question,
-                    classification.entities,
-                    classification.secondary_categories,
-                    classification.requires_fresh_data,
-                    context,
+                workflow_task = asyncio.create_task(
+                    workflow.run(
+                        conversation.standalone_question,
+                        classification.entities,
+                        classification.secondary_categories,
+                        classification.requires_fresh_data,
+                        context,
+                        progress_callback,
+                    )
                 )
-
-            for tool_event in result.tool_events:
-                if options.include_progress:
+            try:
+                while not workflow_task.done() or not progress_queue.empty():
+                    try:
+                        tool_event = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
+                    except TimeoutError:
+                        continue
                     yield StreamEvent(
                         type=StreamEventType.PROGRESS,
                         content=tool_event.summary,
                         data=tool_event.model_dump(mode="json"),
                     )
+                result = await workflow_task
+            finally:
+                if not workflow_task.done():
+                    workflow_task.cancel()
+                    await asyncio.gather(workflow_task, return_exceptions=True)
             for item in result.evidence:
                 yield StreamEvent(
                     type=StreamEventType.SOURCE,
@@ -212,6 +244,11 @@ class TenderQAApplication:
                         "authority_level": item.authority_level,
                         "freshness_level": item.freshness_level,
                     },
+                )
+            if options.include_progress:
+                yield StreamEvent(
+                    type=StreamEventType.PROGRESS,
+                    content=f"已核验 {len(result.evidence)} 条资料并完成引用检查，正在整理最终回答。",
                 )
             async for event in self._answer_events(result.answer):
                 yield event

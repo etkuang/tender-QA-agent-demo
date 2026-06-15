@@ -11,6 +11,7 @@ from agent_layer.schemas import (
     QuestionClassification,
     SourceType,
     StreamEventType,
+    ToolEvent,
     WorkflowResult,
 )
 from agent_layer.workflows.router import WorkflowRouter
@@ -26,7 +27,21 @@ class FakeClassifier:
 
 
 class FakePolicyWorkflow:
-    async def run(self, original_question: str, standalone_question: str, runtime_context) -> WorkflowResult:
+    async def run(
+        self,
+        original_question: str,
+        standalone_question: str,
+        runtime_context,
+        progress_callback=None,
+    ) -> WorkflowResult:
+        if progress_callback is not None:
+            await progress_callback(
+                ToolEvent(
+                    stage="policy_retrieve",
+                    status="started",
+                    summary="正在本地政策资料库中查找对应法规和完整条款。",
+                )
+            )
         evidence = Evidence(
             evidence_id="evidence-1",
             domain=Category.POLICY,
@@ -76,6 +91,9 @@ class TenderQAApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(event.type == StreamEventType.ROUTE for event in events))
         self.assertTrue(any(event.type == StreamEventType.REASONING_SUMMARY for event in events))
         self.assertTrue(any(event.type == StreamEventType.SOURCE for event in events))
+        progress_index = next(index for index, event in enumerate(events) if event.type == StreamEventType.PROGRESS)
+        answer_index = next(index for index, event in enumerate(events) if event.type == StreamEventType.ASSISTANT_DELTA)
+        self.assertLess(progress_index, answer_index)
         self.assertEqual(events[-1].type, StreamEventType.FINAL)
 
     async def test_quick_response_does_not_call_classifier(self):

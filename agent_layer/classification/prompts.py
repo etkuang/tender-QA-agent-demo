@@ -22,7 +22,7 @@ CLASSIFICATION_PROMPT = ChatPromptTemplate.from_messages(
 政策规则优先于企业或舆情背景，例如询问“某企业串标会受到什么处罚”主类是 policy；
 询问“某企业因串标被处罚的近期报道有哪些”主类是 public_opinion。
 requires_fresh_data 在用户询问近期、最新、当前公告、现状、实时报价或舆情时为 true。
-reasoning 只写一句简短理由，不输出思维过程。""",
+reasoning 使用普通用户容易理解的中文，只写一句简短分类依据，不输出思维过程。""",
         ),
         (
             "human",

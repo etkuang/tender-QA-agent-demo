@@ -12,7 +12,7 @@ from agent_layer.api import app
 
 
 class AgentApiTests(unittest.TestCase):
-    def test_stream_uses_target_event_protocol(self):
+    def test_stream_uses_backend_transport_protocol(self):
         with TestClient(app) as client:
             response = client.post(
                 "/chat/stream",
@@ -23,10 +23,12 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         events = [json.loads(line) for line in response.text.splitlines()]
         event_types = [event["type"] for event in events]
-        self.assertEqual(event_types[0], "route")
-        self.assertIn("assistant_delta", event_types)
-        self.assertEqual(event_types[-1], "final")
-        self.assertIn("metrics", events[-1]["data"])
+        self.assertTrue(set(event_types).issubset({"assistant", "reasoning", "error"}))
+        self.assertEqual(event_types[0], "reasoning")
+        self.assertIn("assistant", event_types)
+        reasoning = "".join(event["content"] for event in events if event["type"] == "reasoning")
+        self.assertIn("正在理解您的问题", reasoning)
+        self.assertIn("会话控制消息", reasoning)
 
     def test_request_id_is_required(self):
         with TestClient(app) as client:
