@@ -1,0 +1,22 @@
+[
+  {
+    "path": "pdf/中华人民共和国招标投标法律法规全书.pdf",
+    "title": "中华人民共和国招标投标法律法规全书（2023年版）",
+    "source_kind": "legal_compendium",
+    "layout": "two_column",
+    "source_as_of": "2022-11-30",
+    "authority_level": 2,
+    "freshness_level": 1,
+    "first_page": 15
+  },
+  {
+    "path": "pdf/招标投标法律解读与风险防范实务.pdf",
+    "title": "招标投标法律解读与风险防范实务",
+    "source_kind": "commentary",
+    "layout": "single_column",
+    "source_as_of": "2022-07-31",
+    "authority_level": 1,
+    "freshness_level": 1,
+    "first_page": 16
+  }
+]

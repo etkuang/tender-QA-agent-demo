@@ -11,7 +11,6 @@ class CheckpointStore(Protocol):
     async def save(
         self,
         run_id: str,
-        session_id: str,
         status: str,
         state: dict,
     ) -> None: ...
@@ -28,7 +27,6 @@ class SQLiteCheckpointStore:
     async def save(
         self,
         run_id: str,
-        session_id: str,
         status: str,
         state: dict,
     ) -> None:
@@ -36,15 +34,14 @@ class SQLiteCheckpointStore:
         async with aiosqlite.connect(self.path) as connection:
             await connection.execute(
                 """
-                INSERT INTO workflow_checkpoints(run_id, session_id, status, state_json, updated_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO workflow_checkpoints(run_id, status, state_json, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(run_id) DO UPDATE SET
-                    session_id = excluded.session_id,
                     status = excluded.status,
                     state_json = excluded.state_json,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (run_id, session_id, status, json.dumps(state, ensure_ascii=False)),
+                (run_id, status, json.dumps(state, ensure_ascii=False)),
             )
             await connection.commit()
 
@@ -52,7 +49,7 @@ class SQLiteCheckpointStore:
         await self._ensure_schema()
         async with aiosqlite.connect(self.path) as connection:
             cursor = await connection.execute(
-                "SELECT session_id, status, state_json, updated_at FROM workflow_checkpoints WHERE run_id = ?",
+                "SELECT status, state_json, updated_at FROM workflow_checkpoints WHERE run_id = ?",
                 (run_id,),
             )
             row = await cursor.fetchone()
@@ -60,10 +57,9 @@ class SQLiteCheckpointStore:
             return None
         return {
             "run_id": run_id,
-            "session_id": row[0],
-            "status": row[1],
-            "state": json.loads(row[2]),
-            "updated_at": row[3],
+            "status": row[0],
+            "state": json.loads(row[1]),
+            "updated_at": row[2],
         }
 
     async def delete(self, run_id: str) -> None:
@@ -79,7 +75,6 @@ class SQLiteCheckpointStore:
                 """
                 CREATE TABLE IF NOT EXISTS workflow_checkpoints(
                     run_id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
                     status TEXT NOT NULL,
                     state_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL

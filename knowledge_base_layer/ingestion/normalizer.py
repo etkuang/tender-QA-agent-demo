@@ -25,6 +25,8 @@ class NormalizedChunk(BaseModel):
     region: str = "national"
     effective_date: str = ""
     end_date: str = ""
+    source_kind: str = ""
+    source_as_of: str = ""
     data_version: str
     metadata: str = "{}"
     dense_vector: list[float] = Field(default_factory=list)
@@ -38,7 +40,7 @@ class NormalizationIssue(BaseModel):
 
 
 class ChunkNormalizer:
-    allowed_validity = {"draft", "effective", "amended", "repealed", "unknown"}
+    allowed_validity = {"draft", "effective", "source_snapshot", "amended", "repealed", "unknown"}
 
     def normalize(
         self,
@@ -73,6 +75,8 @@ class ChunkNormalizer:
             region=metadata.get("region") or "national",
             effective_date=self._date_text(metadata.get("effective_date")),
             end_date=self._date_text(metadata.get("end_date")),
+            source_kind=metadata.get("source_kind") or "",
+            source_as_of=self._date_text(metadata.get("source_as_of")),
             data_version=data_version,
             metadata=json.dumps(metadata, ensure_ascii=False, sort_keys=True),
         )

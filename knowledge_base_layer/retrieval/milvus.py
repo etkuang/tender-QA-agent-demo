@@ -4,7 +4,7 @@ import json
 
 import httpx
 
-from agent_layer.config import Settings
+from knowledge_base_layer.config import Settings
 
 
 class MilvusStore:
@@ -121,6 +121,8 @@ class MilvusStore:
                 self._varchar_field("region", 128),
                 self._varchar_field("effective_date", 64),
                 self._varchar_field("end_date", 64),
+                self._varchar_field("source_kind", 64),
+                self._varchar_field("source_as_of", 64),
                 self._varchar_field("data_version", 128),
                 self._varchar_field("metadata", 65535),
                 {

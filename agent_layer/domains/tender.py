@@ -16,5 +16,5 @@ def build_tender_profile(settings: Settings) -> DomainProfile:
         freshness_policy="最新公告按小时级更新，回答必须说明数据截止时间和公告状态。",
         analysis_template="按地区、时间、类别和项目状态筛选；统计时说明样本量与筛选条件。",
         citation_policy="项目条件、中标结果和截止时间必须引用原始公告或可追溯记录。",
-        local_collection=settings.tender_collection,
+        knowledge_index=None,
     )

@@ -1,7 +1,7 @@
 .venv/
 .scripts/
 .idea/
-agent_layer/data/model_cache
+knowledge_base_layer/data/model_cache
 agent_layer/data/databases
 app_backend_layer/history/history.db
 uv.lock

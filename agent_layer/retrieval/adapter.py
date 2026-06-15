@@ -28,8 +28,8 @@ class EvidenceAdapter:
             article_id=f"{article_id}" if article_id not in (None, "") else None,
             published_at=self._parse_datetime(metadata.get("publish_date") or metadata.get("effective_date")),
             score=chunk.get("score"),
-            authority_level=2,
-            freshness_level=self._freshness_level(metadata),
+            authority_level=metadata.get("authority_level") or 0,
+            freshness_level=metadata.get("freshness_level") or self._freshness_level(metadata),
             metadata=self._normalized_metadata(metadata, chunk),
         )
 

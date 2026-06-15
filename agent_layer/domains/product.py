@@ -16,5 +16,5 @@ def build_product_profile(settings: Settings) -> DomainProfile:
         freshness_policy="商品参数按厂商版本和页面更新时间判断有效性。",
         analysis_template="按相同参数维度对齐比较，并解释用户需求与商品参数的对应关系。",
         citation_policy="参数和适配结论必须标明商品主数据或厂商页面来源。",
-        local_collection=settings.product_collection,
+        knowledge_index=None,
     )

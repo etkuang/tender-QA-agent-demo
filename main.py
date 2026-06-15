@@ -100,11 +100,33 @@ def main():
     # add the project root to PYTHONPATH
     shared_env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + shared_env.get("PYTHONPATH", "")
 
+    knowledge_base_port = get_free_port()
+    knowledge_base_url = f"http://127.0.0.1:{knowledge_base_port}"
+
+    knowledge_base_env = shared_env.copy()
+    knowledge_base_env["LOG_SERVICE_NAME"] = "knowledge-base"
+    knowledge_base_cmd = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "knowledge_base_layer.api:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(knowledge_base_port),
+    ]
+    launch_process(knowledge_base_cmd, knowledge_base_env, kwargs)
+
+    if not wait_for_port(knowledge_base_port):
+        logger.error("Knowledge-base service failed to start | port=%s", knowledge_base_port)
+        stop_all_services(None, None)
+
     agent_port = get_free_port()
     agent_base_url = f"http://127.0.0.1:{agent_port}"
 
     agent_env = shared_env.copy()
     agent_env["LOG_SERVICE_NAME"] = "agent"
+    agent_env["KNOWLEDGE_BASE_URL"] = knowledge_base_url
     agent_cmd = [
         sys.executable,
         "-m",
@@ -166,8 +188,9 @@ def main():
         stop_all_services(None, None)
 
     logger.info(
-        "Three-layer services started | agent_api=http://127.0.0.1:%s | backend_api=%s | frontend_ui=http://127.0.0.1:%s",
-        agent_port,
+        "Services started | knowledge_base_api=%s | agent_api=%s | backend_api=%s | frontend_ui=http://127.0.0.1:%s",
+        knowledge_base_url,
+        agent_base_url,
         backend_url,
         frontend_port,
     )

@@ -13,13 +13,9 @@ from agent_layer.domains.public_opinion import build_public_opinion_profile
 from agent_layer.domains.tender import build_tender_profile
 from agent_layer.models import ModelFactory
 from agent_layer.retrieval.adapter import EvidenceAdapter
-from agent_layer.retrieval.fusion import HybridFusion
-from agent_layer.retrieval.milvus import MilvusStore
-from agent_layer.retrieval.parent_context import ParentContextExpander
+from agent_layer.retrieval.client import KnowledgeBaseClient
 from agent_layer.retrieval.pipeline import RetrievalPipeline
-from agent_layer.retrieval.retriever import HybridRetriever
 from agent_layer.retrieval.rewrite import QuestionRewriter
-from agent_layer.schemas import Category
 from agent_layer.sql.gateway import SQLGateway
 from agent_layer.workflows.analysis import DatasetAnalyzer
 from agent_layer.workflows.data_domain import DataDomainWorkflow, ResearchPlanner
@@ -38,16 +34,11 @@ def build_application(
     structured_model = model_factory.build_chat_model(temperature=0.0, max_tokens=1000)
     answer_model = model_factory.build_chat_model(temperature=0.2)
 
-    store = MilvusStore(runtime_settings)
-    embeddings = model_factory.build_embedding_gateway()
-    fusion = HybridFusion(runtime_settings)
-    retriever = HybridRetriever(store, embeddings, fusion, runtime_settings)
     evidence_adapter = EvidenceAdapter()
     retrieval_pipeline = RetrievalPipeline(
-        retriever,
+        KnowledgeBaseClient(runtime_settings),
         evidence_adapter,
         runtime_settings,
-        ParentContextExpander(store),
     )
 
     classifier = QuestionClassifier(structured_model, runtime_settings)

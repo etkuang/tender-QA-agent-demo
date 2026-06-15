@@ -2,9 +2,9 @@
 
 from pydantic import BaseModel, Field
 
-from agent_layer.ingestion.normalizer import ChunkNormalizer, NormalizationIssue, NormalizedChunk
-from agent_layer.models import EmbeddingGateway
-from agent_layer.retrieval.milvus import MilvusStore
+from knowledge_base_layer.embeddings import EmbeddingGateway
+from knowledge_base_layer.ingestion.normalizer import ChunkNormalizer, NormalizationIssue, NormalizedChunk
+from knowledge_base_layer.retrieval.milvus import MilvusStore
 
 
 class IngestionManifest(BaseModel):

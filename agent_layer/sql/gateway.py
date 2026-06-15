@@ -7,7 +7,7 @@ from typing import Protocol
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
-from common.logger import get_logger
+from common.logger import get_logger, get_request_id
 from agent_layer.config import Settings
 from agent_layer.errors import SQLValidationError
 from agent_layer.schemas import DataResult, ResearchTask, SessionContext
@@ -98,7 +98,7 @@ class ReadOnlySQLGateway:
                 await self.audit_sink.record(
                     SQLAuditEvent(
                         task_id=task.task_id,
-                        session_id=runtime_context.session_id or "",
+                        request_id=get_request_id(),
                         statement=candidate.statement,
                         parameter_names=sorted(candidate.parameters),
                         status="validation_failed",
@@ -121,7 +121,7 @@ class ReadOnlySQLGateway:
                 await self.audit_sink.record(
                     SQLAuditEvent(
                         task_id=task.task_id,
-                        session_id=runtime_context.session_id or "",
+                        request_id=get_request_id(),
                         statement=validated.statement,
                         parameter_names=sorted(candidate.parameters),
                         status="execution_failed",
@@ -133,7 +133,7 @@ class ReadOnlySQLGateway:
             await self.audit_sink.record(
                 SQLAuditEvent(
                     task_id=task.task_id,
-                    session_id=runtime_context.session_id or "",
+                    request_id=get_request_id(),
                     statement=validated.statement,
                     parameter_names=sorted(candidate.parameters),
                     status="completed",

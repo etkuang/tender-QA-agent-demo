@@ -1,6 +1,6 @@
 # coding: utf-8
 
-from agent_layer.retrieval.store import VectorStore
+from knowledge_base_layer.retrieval.store import VectorStore
 
 
 class ParentContextExpander:

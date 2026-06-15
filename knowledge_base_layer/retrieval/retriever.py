@@ -1,9 +1,9 @@
 # coding: utf-8
 
-from agent_layer.config import Settings
-from agent_layer.models import EmbeddingGateway
-from agent_layer.retrieval.fusion import HybridFusion
-from agent_layer.retrieval.store import VectorStore
+from knowledge_base_layer.config import Settings
+from knowledge_base_layer.embeddings import EmbeddingGateway
+from knowledge_base_layer.retrieval.fusion import HybridFusion
+from knowledge_base_layer.retrieval.store import VectorStore
 
 
 class HybridRetriever:
@@ -48,16 +48,22 @@ class HybridRetriever:
             limit,
         )
 
-    def search_article_exact(self, law_name: str, article_num: str, as_of_date: str | None = None) -> list[dict]:
+    def search_article_exact(
+        self,
+        collection: str,
+        law_name: str,
+        article_num: str,
+        as_of_date: str | None,
+        region: str | None,
+        top_k: int,
+    ) -> list[dict]:
         filters = [f'article_id == "{self._escape(article_num)}"']
         if law_name:
             filters.append(f'law_name == "{self._escape(law_name)}"')
-        filters.append(self.build_policy_filter(as_of_date))
-        return self.store.query(
-            self.settings.policy_collection,
-            " and ".join(filters),
-            self.settings.top_k,
-        )
+        policy_filter = self.build_policy_filter(as_of_date, region)
+        if policy_filter:
+            filters.append(policy_filter)
+        return self.store.query(collection, " and ".join(filters), top_k)
 
     def _select_fusion_method(self, query: str) -> str:
         return self.settings.fusion_strategy
@@ -67,9 +73,7 @@ class HybridRetriever:
         filters = []
         if as_of_date:
             escaped = HybridRetriever._escape(as_of_date)
-            filters.append(f'effective_date <= "{escaped}" and (end_date == "" or end_date > "{escaped}")')
-        else:
-            filters.append('validity_status == "effective"')
+            filters.append(f'source_as_of <= "{escaped}"')
         if region:
             escaped_region = HybridRetriever._escape(region)
             filters.append(f'region in ["national", "{escaped_region}"]')

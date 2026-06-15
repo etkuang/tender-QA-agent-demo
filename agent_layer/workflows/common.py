@@ -17,7 +17,7 @@ class DomainProfile(BaseModel):
     freshness_policy: str
     analysis_template: str
     citation_policy: str
-    local_collection: str | None = None
+    knowledge_index: str | None = None
 
 
 def format_evidence(evidence: list[Evidence], max_length: int = 1200) -> str:

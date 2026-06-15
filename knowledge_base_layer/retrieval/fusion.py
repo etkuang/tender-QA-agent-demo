@@ -2,7 +2,7 @@
 
 import hashlib
 
-from agent_layer.config import Settings
+from knowledge_base_layer.config import Settings
 
 
 class HybridFusion:

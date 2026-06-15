@@ -46,7 +46,6 @@ class Message(BaseModel):
 
 
 class SessionContext(BaseModel):
-    session_id: str | None = None
     entity_state: dict[str, Any] = Field(default_factory=dict)
     conversation_summary: str = ""
     trusted_attributes: dict[str, Any] = Field(default_factory=dict, exclude=True)

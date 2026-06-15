@@ -212,8 +212,7 @@ class PolicyWorkflow:
             ),
             progress_callback,
         )
-        retrieval_output = await asyncio.to_thread(
-            self.retrieval.retrieve_policy,
+        retrieval_output = await self.retrieval.retrieve_policy(
             standalone_question,
             policy_query,
         )

@@ -16,5 +16,5 @@ def build_price_profile(settings: Settings) -> DomainProfile:
         freshness_policy="报价时效按来源配置，回答必须显示报价或成交日期。",
         analysis_template="输出样本量、时间范围、分位数、趋势和异常值处理规则。",
         citation_policy="每个关键价格数字必须可映射到查询结果或原始报价来源。",
-        local_collection=settings.price_collection,
+        knowledge_index=None,
     )

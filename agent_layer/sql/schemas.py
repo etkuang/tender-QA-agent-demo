@@ -29,7 +29,7 @@ class ViewSchema(BaseModel):
 
 class SQLAuditEvent(BaseModel):
     task_id: str
-    session_id: str
+    request_id: str
     statement: str
     parameter_names: list[str]
     status: Literal["validation_failed", "execution_failed", "completed"]

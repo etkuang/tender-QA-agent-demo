@@ -16,5 +16,5 @@ def build_company_profile(settings: Settings) -> DomainProfile:
         freshness_policy="企业基本信息按天更新，处罚和经营异常采用更短时效。",
         analysis_template="结合历史中标次数、金额、地区和类别覆盖分析能力与风险。",
         citation_policy="回答说明企业标识、统计口径、截止时间和未知项。",
-        local_collection=settings.company_collection,
+        knowledge_index=None,
     )

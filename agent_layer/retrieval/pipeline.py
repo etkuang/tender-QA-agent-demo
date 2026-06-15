@@ -3,14 +3,13 @@
 import re
 import time
 
+from common.knowledge_base_schemas import KnowledgeSearchRequest
 from common.logger import get_logger
 from agent_layer.config import Settings
 from agent_layer.errors import PolicyRetrievalError
 from agent_layer.retrieval.adapter import EvidenceAdapter
 from agent_layer.retrieval.chinese_number import ChineseNumberConverter
-from agent_layer.retrieval.parent_context import ParentContextExpander
-from agent_layer.retrieval.reranker import Reranker
-from agent_layer.retrieval.retriever import HybridRetriever
+from agent_layer.retrieval.client import KnowledgeBaseClient
 from agent_layer.schemas import Category, Evidence, PolicyQuery, ToolEvent
 
 logger = get_logger("agent.retrieval.pipeline")
@@ -25,78 +24,80 @@ class RetrievalOutput:
 class RetrievalPipeline:
     def __init__(
         self,
-        retriever: HybridRetriever,
+        client: KnowledgeBaseClient,
         adapter: EvidenceAdapter,
         settings: Settings,
-        parent_expander: ParentContextExpander | None = None,
-        reranker: Reranker | None = None,
     ):
-        self.retriever = retriever
+        self.client = client
         self.adapter = adapter
         self.settings = settings
         self.number_converter = ChineseNumberConverter()
-        self.parent_expander = parent_expander
-        self.reranker = reranker
 
-    def retrieve_policy(self, question: str, policy_query: PolicyQuery | None = None) -> RetrievalOutput:
+    async def retrieve_policy(
+        self,
+        question: str,
+        policy_query: PolicyQuery | None = None,
+    ) -> RetrievalOutput:
         started = time.perf_counter()
-        events = [ToolEvent(stage="policy_retrieve", status="started", summary="开始检索本地政策库。")]
+        events = [ToolEvent(stage="policy_retrieve", status="started", summary="开始检索政策知识库。")]
         try:
             parsed_query = policy_query or PolicyQuery()
             article_num = parsed_query.article_id or self.number_converter.extract_article_number(question)
             law_name = parsed_query.law_name or self._extract_law_name(question)
-            as_of_date = parsed_query.as_of_date.isoformat() if parsed_query.as_of_date else None
-            chunks = []
-            if article_num:
-                chunks = self.retriever.search_article_exact(law_name, article_num, as_of_date)
-            if not chunks:
-                chunks = self.retriever.search(
-                    question,
-                    self.settings.policy_collection,
-                    top_k=self.settings.top_k * 2,
-                    scalar_filter=self.retriever.build_policy_filter(as_of_date, parsed_query.region),
+            response = await self.client.search(
+                KnowledgeSearchRequest(
+                    index=self.settings.policy_knowledge_index,
+                    query=question,
+                    top_k=self.settings.top_k,
+                    law_name=law_name or None,
+                    article_id=article_num,
+                    as_of_date=parsed_query.as_of_date,
+                    region=parsed_query.region,
                 )
-            expanded = chunks
-            if self.settings.parent_context_enabled and self.parent_expander is not None:
-                expanded = self.parent_expander.expand(self.settings.policy_collection, chunks)
-            if self.settings.reranker_enabled:
-                if self.reranker is None:
-                    raise RuntimeError("Reranker is enabled but no implementation was injected.")
-                expanded = self.reranker.rerank(
-                    question,
-                    expanded[: self.settings.reranker_candidate_pool],
-                    self.settings.top_k,
-                )
-            evidence = self._adapt_policy(expanded)
+            )
+            chunks = [hit.model_dump() for hit in response.hits]
+            evidence = self._adapt_policy(chunks)
         except Exception as exc:
-            logger.exception("policy retrieval failed")
+            logger.exception("policy knowledge-base retrieval failed")
             raise PolicyRetrievalError from exc
         events.append(
             ToolEvent(
                 stage="policy_retrieve",
                 status="completed",
-                summary=f"本地政策检索完成，确认 {len(evidence)} 条证据。",
+                summary=f"政策知识库检索完成，确认 {len(evidence)} 条证据。",
                 duration_ms=(time.perf_counter() - started) * 1000,
                 details={
-                    "article_exact": bool(article_num),
+                    "article_exact": article_num not in (None, ""),
                     "law_name": law_name,
-                    "as_of_date": as_of_date,
+                    "as_of_date": parsed_query.as_of_date.isoformat() if parsed_query.as_of_date else None,
                     "region": parsed_query.region,
                 },
             )
         )
         return RetrievalOutput(evidence, events)
 
-    def retrieve_domain(self, question: str, category: Category, collection: str) -> RetrievalOutput:
+    async def retrieve_domain(
+        self,
+        question: str,
+        category: Category,
+        knowledge_index: str,
+    ) -> RetrievalOutput:
         started = time.perf_counter()
-        chunks = self.retriever.search(question, collection, top_k=self.settings.top_k)
+        response = await self.client.search(
+            KnowledgeSearchRequest(
+                index=knowledge_index,
+                query=question,
+                top_k=self.settings.top_k,
+            )
+        )
+        chunks = [hit.model_dump() for hit in response.hits]
         evidence = [self.adapter.from_domain_chunk(chunk, category) for chunk in chunks]
         event = ToolEvent(
             stage="local_domain_retrieve",
             status="completed",
-            summary=f"本地历史索引检索完成，确认 {len(evidence)} 条记录。",
+            summary=f"知识库检索完成，确认 {len(evidence)} 条记录。",
             duration_ms=(time.perf_counter() - started) * 1000,
-            details={"collection": collection},
+            details={"knowledge_index": knowledge_index},
         )
         return RetrievalOutput(evidence, [event])
 

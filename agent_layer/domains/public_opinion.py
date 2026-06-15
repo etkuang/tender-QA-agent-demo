@@ -16,5 +16,5 @@ def build_public_opinion_profile(settings: Settings) -> DomainProfile:
         freshness_policy="舆情按分钟级更新，必须明确查询时间窗。",
         analysis_template="执行实体消歧、事件聚类、来源分级、情绪与趋势分析。",
         citation_policy="风险事实必须标注来源等级，不得以转载数量替代事件数量。",
-        local_collection=settings.public_opinion_collection,
+        knowledge_index=None,
     )
