@@ -63,7 +63,14 @@ class SqlglotValidator:
             raise SQLValidationError
 
         schema_map = {schema.name: schema for schema in view_schemas}
-        tables = sorted({table.name for table in tree.find_all(self.exp.Table)})
+        cte_names = {cte.alias_or_name for cte in tree.find_all(self.exp.CTE)}
+        tables = sorted(
+            {
+                table.name
+                for table in tree.find_all(self.exp.Table)
+                if table.name not in cte_names
+            }
+        )
         if not tables or any(table not in schema_map for table in tables):
             raise SQLValidationError
 

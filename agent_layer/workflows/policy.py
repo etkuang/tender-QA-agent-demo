@@ -180,6 +180,7 @@ class PolicyWorkflow:
         progress_callback: ProgressCallback | None = None,
     ) -> WorkflowResult:
         events = []
+        model_calls = 0
         await self._record_event(
             events,
             ToolEvent(
@@ -191,6 +192,7 @@ class PolicyWorkflow:
         )
         parse_started = time.perf_counter()
         policy_query = await self.query_parser.parse(standalone_question)
+        model_calls += 1
         await self._record_event(
             events,
             ToolEvent(
@@ -202,6 +204,7 @@ class PolicyWorkflow:
             ),
             progress_callback,
         )
+
         await self._record_event(
             events,
             ToolEvent(
@@ -219,7 +222,6 @@ class PolicyWorkflow:
         for event in retrieval_output.events:
             if event.status != "started":
                 await self._record_event(events, event, progress_callback)
-        evidence_text = format_evidence(evidence, self.settings.summarize_chunk_length)
 
         await self._record_event(
             events,
@@ -231,7 +233,13 @@ class PolicyWorkflow:
             progress_callback,
         )
         assessment_started = time.perf_counter()
-        assessment = await self.assessment.assess(standalone_question, evidence_text, len(evidence))
+        assessment = await self.assessment.assess(
+            standalone_question,
+            format_evidence(evidence, self.settings.summarize_chunk_length),
+            len(evidence),
+        )
+        if evidence:
+            model_calls += 1
         await self._record_event(
             events,
             ToolEvent(
@@ -267,9 +275,62 @@ class PolicyWorkflow:
             for event in internet_events:
                 await self._record_event(events, event, progress_callback)
 
+            if internet_evidence:
+                await self._record_event(
+                    events,
+                    ToolEvent(
+                        stage="policy_assessment",
+                        status="started",
+                        summary="官方资料已经补充，正在重新检查证据完整性。",
+                    ),
+                    progress_callback,
+                )
+                reassessment_started = time.perf_counter()
+                assessment = await self.assessment.assess(
+                    standalone_question,
+                    format_evidence(evidence, self.settings.summarize_chunk_length),
+                    len(evidence),
+                )
+                model_calls += 1
+                await self._record_event(
+                    events,
+                    ToolEvent(
+                        stage="policy_assessment",
+                        status="completed",
+                        summary=(
+                            "补充资料后，现有证据已经足以支持回答。"
+                            if assessment.sufficient
+                            else "补充资料后仍存在关键证据缺口。"
+                        ),
+                        duration_ms=(time.perf_counter() - reassessment_started) * 1000,
+                        details=assessment.model_dump(),
+                    ),
+                    progress_callback,
+                )
+
         evidence = rank_evidence(evidence)
         if not evidence:
-            return WorkflowResult(answer=self.settings.no_results_response, tool_events=events, model_calls=2)
+            return WorkflowResult(
+                answer=self.settings.no_results_response,
+                tool_events=events,
+                model_calls=model_calls,
+            )
+
+        citations = build_citations(evidence)
+        if not assessment.sufficient:
+            missing_information = "、".join(assessment.missing_information)
+            answer = f"当前证据不足以可靠回答该政策问题：{assessment.reason}"
+            if missing_information:
+                answer += f" 尚缺少：{missing_information}。"
+            answer += "系统未生成实质性法律结论，请以主管部门或现行官方文本的核验结果为准。"
+            answer = ensure_source_section(answer, citations)
+            return WorkflowResult(
+                answer=answer,
+                evidence=evidence,
+                citations=citations,
+                tool_events=events,
+                model_calls=model_calls,
+            )
 
         await self._record_event(
             events,
@@ -281,7 +342,6 @@ class PolicyWorkflow:
             progress_callback,
         )
         answer_started = time.perf_counter()
-        citations = build_citations(evidence)
         answer_input = {
             "original_question": original_question,
             "question": standalone_question,
@@ -290,7 +350,7 @@ class PolicyWorkflow:
             "citation_feedback": "",
         }
         answer = await self._generate_answer(answer_input)
-        model_calls = 3
+        model_calls += 1
         if not citations_are_valid(answer, len(citations)):
             answer_input["citation_feedback"] = "上一版引用缺失或编号越界。请仅使用现有 [1] 到 [N] 编号重写。"
             answer = await self._generate_answer(answer_input)

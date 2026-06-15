@@ -3,7 +3,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Message(BaseModel):
@@ -14,7 +14,8 @@ class Message(BaseModel):
 class SessionContext(BaseModel):
     entity_state: dict[str, Any] = Field(default_factory=dict)
     conversation_summary: str = ""
-    trusted_attributes: dict[str, Any] = Field(default_factory=dict, exclude=True)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class GenerationOptions(BaseModel):

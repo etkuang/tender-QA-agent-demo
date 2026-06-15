@@ -28,7 +28,7 @@ class DatasetAnalyzer:
             notes.append("结果已按行数上限截断，统计摘要仅基于返回数据。")
         return AnalysisSummary(
             query_id=result.query_id,
-            sample_size=result.row_count,
+            sample_size=len(result.rows),
             filters=result.filters,
             numeric_metrics=numeric_metrics,
             missing_values=missing_values,

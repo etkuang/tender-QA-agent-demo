@@ -14,13 +14,14 @@ Agent 层覆盖政策、招投标、舆情、公司、价格、产品和其他�
 ## 2) 顶层结构
 
 - `main.py`：按顺序启动 Knowledge Base、Agent、Backend 和 Frontend 四个服务。
-- `knowledge_base_layer/`：知识检索 HTTP 契约、Milvus、Embedding、PDF 解析和索引发布。
+- `knowledge_base_layer/`：知识检索服务实现、Milvus、Embedding、PDF 解析和索引发布。
 - `agent_layer/`：分类、上下文解析、工作流、知识库客户端、SQL、安全网关和评测。
 - `app_backend_layer/`：后端 API、会话数据库、日志和配置。
 - `app_frontend_layer/`：前端 UI 和交互组件。
-- `common/`：共享 request ID 日志上下文和日志器。
+- `common/`：共享 REST API contracts、request ID 日志上下文和日志器。
 - `history/`：Backend 的 SQLite 会话数据库运行目录。
 - `pyproject.toml`、`uv.lock`：项目依赖和锁文件。
+- `test.py`：独立的代理环境诊断脚本，打印系统代理、环境变量和 Windows 注册表代理配置；不属于自动化测试套件。
 - `招投标六类智能问答系统技术方案报告.docx`：Agent 架构的技术依据。
 
 ## 3) 启动链路
@@ -49,6 +50,8 @@ Agent 对 Backend 暴露 `POST /chat/stream` NDJSON 事件流。Knowledge Base �
 - `checkpoint.py`：独立于聊天历史的 SQLite 执行检查点。
 
 Agent 内部事件包括：`route`、`progress`、`reasoning_summary`、`source`、`assistant_delta`、`final`、`error`。`api.py` 在 HTTP 边界将内部事件整理为 Backend 当前契约支持的 `reasoning`、`assistant`、`error`。
+
+Backend-Agent 的请求和流式 DTO 定义在 `common/api_contracts/agent_api.py`。`agent_layer/schemas.py` 只重导出 Agent 内部仍使用的 `Message`、`SessionContext` 和 `GenerationOptions`，不再拥有 HTTP DTO 定义。
 
 ### 4.2 分类和上下文
 
@@ -99,7 +102,7 @@ Agent 不再直接持有 Milvus 凭据、Embedding 模型、向量检索、融�
 
 ### 5.1 HTTP 契约和服务
 
-- `schemas.py`：`KnowledgeSearchRequest`、`KnowledgeHit` 和 `KnowledgeSearchResponse`。这些协议模型按当前设计归属 Knowledge Base 层，而不是 `common/`。
+- `common/api_contracts/knowledge_base_api.py`：Agent 与 Knowledge Base 共用的 `KnowledgeSearchRequest`、`KnowledgeHit` 和 `KnowledgeSearchResponse` 唯一定义。
 - `api.py`：FastAPI 健康检查和搜索接口。
 - `service.py`：逻辑索引解析、精确条款查询、混合检索、父文档扩展和可选重排。
 - `bootstrap.py`：构造 Milvus、Embedding、融合器、检索器和服务。
@@ -133,7 +136,7 @@ Agent 不再直接持有 Milvus 凭据、Embedding 模型、向量检索、融�
 - `api_routes/sessions.py`：会话列表、消息读取和删除。
 - `history/history_db.py`：SQLite 会话与消息持久化。
 
-Backend 通过 `AGENT_BASE_URL` 调用 Agent。
+Backend 通过 `AGENT_BASE_URL` 调用 Agent。Frontend-Backend DTO 位于 `common/api_contracts/backend_api.py`；Backend-Agent DTO 位于 `common/api_contracts/agent_api.py`，Backend 显式完成两条边界之间的 stream chunk 适配。
 
 ## 7) Frontend 层
 
@@ -142,13 +145,14 @@ Backend 通过 `AGENT_BASE_URL` 调用 Agent。
 - `components/chat_view.py`：聊天展示和流式消费。
 - `components/sidebar.py`：会话管理和设置。
 
-Frontend 通过 `BACKEND_URL` 调用 Backend。
+Frontend 通过 `BACKEND_URL` 调用 Backend，并与 Backend 共用 `common/api_contracts/backend_api.py` 中的请求和响应模型。
 
 ## 8) 运行约束
 
 1. 项目使用 namespace package，运行时需要把项目根目录加入 `PYTHONPATH`。
 2. 在线知识检索需要可访问的 Milvus 服务及已发布的 `tender_qa_policy` alias。
 3. Embedding 维度必须与 Milvus collection schema 一致，默认维度为 768。
-4. SQL 能力需要安装 `sqlglot`，并注入只读执行器和审计落地实现。
+4. SQL 能力的 `sqlglot` 依赖已在 `pyproject.toml` 和 `uv.lock` 中声明；实际执行仍需要注入只读执行器和审计落地实现。
 5. 网站和政策互联网能力需要注入具体适配器；未配置时不会虚构外部检索结果。
 6. 两份政策 PDF 是截至 2022 年的来源快照，不能直接视为当前有效法律全集。
+7. 当前没有 `agent_layer/tests/` 或 `knowledge_base_layer/tests/` 自动化回归测试目录；顶层 `test.py` 仅用于代理配置诊断。

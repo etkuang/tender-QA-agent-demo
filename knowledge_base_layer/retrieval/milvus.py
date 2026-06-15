@@ -218,11 +218,16 @@ class MilvusStore:
         return [self._entity_to_document(hit, hit.get("distance")) for hit in hits]
 
     def _entity_to_document(self, entity: dict, score: float | None = None) -> dict:
-        metadata = dict(entity)
-        document_id = metadata.pop(self.settings.milvus_primary_field, metadata.pop("id", ""))
-        content = metadata.pop(self.settings.milvus_content_field, "")
-        metadata.pop("distance", None)
-        raw_metadata = metadata.pop("metadata", None)
+        scalar_metadata = dict(entity)
+        document_id = scalar_metadata.pop(
+            self.settings.milvus_primary_field,
+            scalar_metadata.pop("id", ""),
+        )
+        content = scalar_metadata.pop(self.settings.milvus_content_field, "")
+        scalar_metadata.pop("distance", None)
+        raw_metadata = scalar_metadata.pop("metadata", None)
+
+        metadata = {}
         if isinstance(raw_metadata, str):
             try:
                 raw_metadata = json.loads(raw_metadata)
@@ -230,6 +235,8 @@ class MilvusStore:
                 raw_metadata = {"raw_metadata": raw_metadata}
         if isinstance(raw_metadata, dict):
             metadata.update(raw_metadata)
+        metadata.update(scalar_metadata)
+
         return {
             "id": f"{document_id}",
             "text": content,

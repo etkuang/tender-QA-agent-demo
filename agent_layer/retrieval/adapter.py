@@ -16,6 +16,11 @@ class EvidenceAdapter:
         title = law_name or "未知政策来源"
         if article_id not in (None, "", "unknown", "full"):
             title = f"{title} 第{article_id}条"
+        freshness_level = (
+            metadata["freshness_level"]
+            if "freshness_level" in metadata
+            else self._freshness_level(metadata)
+        )
         return Evidence(
             evidence_id=self._stable_id("policy", document_id, chunk.get("text", "")),
             domain=Category.POLICY,
@@ -26,10 +31,10 @@ class EvidenceAdapter:
             document_id=document_id,
             law_name=law_name,
             article_id=f"{article_id}" if article_id not in (None, "") else None,
-            published_at=self._parse_datetime(metadata.get("publish_date") or metadata.get("effective_date")),
+            published_at=self._parse_datetime(metadata.get("published_at") or metadata.get("publish_date")),
             score=chunk.get("score"),
             authority_level=metadata.get("authority_level") or 0,
-            freshness_level=metadata.get("freshness_level") or self._freshness_level(metadata),
+            freshness_level=freshness_level,
             metadata=self._normalized_metadata(metadata, chunk),
         )
 

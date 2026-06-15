@@ -39,6 +39,14 @@ def main() -> None:
     )
     print(json.dumps(manifest.model_dump(mode="json"), ensure_ascii=False, indent=2))
 
+    failed = (
+        any(issue.critical for issue in manifest.issues)
+        or manifest.written_count != manifest.source_count
+        or (args.publish and not manifest.published)
+    )
+    if failed:
+        raise SystemExit(1)
+
 
 if __name__ == "__main__":
     main()
