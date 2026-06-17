@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     milvus_bm25_k1: float = 1.2
     milvus_bm25_b: float = 0.75
 
-    index_aliases: dict[str, str] = {"policy": "tender_qa_policy"}
+    policy_collection_alias: str = "tender_qa_policy"
     top_k: int = 5
     vector_recall: int = 30
     bm25_recall: int = 30

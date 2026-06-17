@@ -22,7 +22,6 @@ from agent_layer.errors import (
     raise_model_error,
 )
 from agent_layer.retrieval.adapter import EvidenceAdapter
-from agent_layer.retrieval.pipeline import RetrievalPipeline
 from agent_layer.schemas import (
     Category,
     Evidence,
@@ -145,20 +144,18 @@ class DataDomainWorkflow:
         profiles: dict[Category, DomainProfile],
         planner: ResearchPlanner,
         answer_model: BaseChatModel,
-        adapter: EvidenceAdapter,
-        settings: Settings,
-        retrieval: RetrievalPipeline | None = None,
-        sql_gateway: SQLGateway | None = None,
-        website_clients: dict[str, WebsiteSearchClient] | None = None,
-        analyzer: DatasetAnalyzer | None = None,
-        checkpoint_store: CheckpointStore | None = None,
+            adapter: EvidenceAdapter,
+            settings: Settings,
+            sql_gateway: SQLGateway | None = None,
+            website_clients: dict[str, WebsiteSearchClient] | None = None,
+            analyzer: DatasetAnalyzer | None = None,
+            checkpoint_store: CheckpointStore | None = None,
     ):
         self.profile = profile
         self.profiles = profiles
         self.planner = planner
         self.adapter = adapter
         self.settings = settings
-        self.retrieval = retrieval
         self.sql_gateway = sql_gateway
         self.website_clients = website_clients or {}
         self.analyzer = analyzer or DatasetAnalyzer()
@@ -258,7 +255,11 @@ class DataDomainWorkflow:
             "profile": self.profile.model_dump_json(),
             "question": question,
             "plan": plan.model_dump_json(),
-            "evidence": format_evidence(evidence),
+            "evidence": format_evidence(
+                evidence,
+                self.settings.evidence_chunk_chars,
+                max_total_chars=self.settings.evidence_context_chars,
+            ),
             "citation_feedback": "",
         }
         answer = await self._generate_answer(answer_input)
@@ -364,8 +365,6 @@ class DataDomainWorkflow:
             jobs.append(self._execute_sql(task, profile, runtime_context, progress_callback))
         if task.preferred_source in {"website", "both"}:
             jobs.append(self._execute_web(task, plan, profile, runtime_context, progress_callback))
-        if profile.knowledge_index and self.retrieval is not None:
-            jobs.append(self._execute_local(task, profile, progress_callback))
         if not jobs:
             event = ToolEvent(stage=task.task_id, status="skipped", summary="该查询任务没有可用的数据来源。")
             await self._report(event, progress_callback)
@@ -459,7 +458,7 @@ class DataDomainWorkflow:
         )
         started = time.perf_counter()
         results = await asyncio.gather(
-            *(client.search(query, self.settings.top_k, runtime_context) for client in clients),
+            *(client.search(query, self.settings.retrieval_batch_size, runtime_context) for client in clients),
             return_exceptions=True,
         )
         evidence = []
@@ -478,31 +477,6 @@ class DataDomainWorkflow:
         )
         await self._report(event, progress_callback)
         return evidence, [event], []
-
-    async def _execute_local(
-        self,
-        task: ResearchTask,
-        profile: DomainProfile,
-        progress_callback: ProgressCallback | None,
-    ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
-        await self._report(
-            ToolEvent(stage="local_domain_retrieve", status="started", summary="正在知识库中查找相关历史记录。"),
-            progress_callback,
-        )
-        try:
-            result = await self.retrieval.retrieve_domain(
-                task.goal,
-                profile.category,
-                profile.knowledge_index,
-            )
-        except Exception:
-            logger.warning("knowledge-base domain retrieval failed | task_id=%s", task.task_id, exc_info=True)
-            event = ToolEvent(stage="local_domain_retrieve", status="failed", summary="知识库查询失败。")
-            await self._report(event, progress_callback)
-            return [], [event], []
-        for event in result.events:
-            await self._report(event, progress_callback)
-        return result.evidence, result.events, []
 
     @staticmethod
     async def _report(event: ToolEvent, progress_callback: ProgressCallback | None) -> None:

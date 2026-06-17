@@ -19,7 +19,7 @@ from agent_layer.retrieval.rewrite import QuestionRewriter
 from agent_layer.sql.gateway import SQLGateway
 from agent_layer.workflows.analysis import DatasetAnalyzer
 from agent_layer.workflows.data_domain import DataDomainWorkflow, ResearchPlanner
-from agent_layer.workflows.general import GeneralWorkflow
+from agent_layer.workflows.general import CompositeAnswerWorkflow, GeneralWorkflow
 from agent_layer.workflows.policy import PolicyAssessmentChain, PolicyQueryParser, PolicyWorkflow
 from agent_layer.workflows.router import WorkflowRouter
 
@@ -45,6 +45,7 @@ def build_application(
     context_resolver = ContextResolver(QuestionRewriter(), structured_model, runtime_settings)
     router = WorkflowRouter(runtime_settings)
     general_workflow = GeneralWorkflow(answer_model)
+    composite_workflow = CompositeAnswerWorkflow(answer_model, runtime_settings)
     policy_assessment = PolicyAssessmentChain(structured_model, runtime_settings)
     policy_query_parser = PolicyQueryParser(structured_model, runtime_settings)
     policy_workflow = PolicyWorkflow(
@@ -77,7 +78,6 @@ def build_application(
             answer_model,
             evidence_adapter,
             runtime_settings,
-            retrieval_pipeline,
             sql_gateway,
             clients,
             analyzer,
@@ -92,6 +92,7 @@ def build_application(
         classifier=classifier,
         router=router,
         general_workflow=general_workflow,
+        composite_workflow=composite_workflow,
         policy_workflow=policy_workflow,
         data_workflows=data_workflows,
     )

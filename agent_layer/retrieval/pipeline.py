@@ -10,7 +10,7 @@ from agent_layer.errors import PolicyRetrievalError
 from agent_layer.retrieval.adapter import EvidenceAdapter
 from agent_layer.retrieval.chinese_number import ChineseNumberConverter
 from agent_layer.retrieval.client import KnowledgeBaseClient
-from agent_layer.schemas import Category, Evidence, PolicyQuery, ToolEvent
+from agent_layer.schemas import Evidence, PolicyQuery, ToolEvent
 
 logger = get_logger("agent.retrieval.pipeline")
 
@@ -46,9 +46,8 @@ class RetrievalPipeline:
             law_name = parsed_query.law_name or self._extract_law_name(question)
             response = await self.client.search(
                 KnowledgeSearchRequest(
-                    index=self.settings.policy_knowledge_index,
                     query=question,
-                    top_k=self.settings.top_k,
+                    top_k=self.settings.retrieval_batch_size,
                     law_name=law_name or None,
                     article_id=article_num,
                     as_of_date=parsed_query.as_of_date,
@@ -67,6 +66,7 @@ class RetrievalPipeline:
                 summary=f"政策知识库检索完成，确认 {len(evidence)} 条证据。",
                 duration_ms=(time.perf_counter() - started) * 1000,
                 details={
+                    "query": question,
                     "article_exact": article_num not in (None, ""),
                     "law_name": law_name,
                     "as_of_date": parsed_query.as_of_date.isoformat() if parsed_query.as_of_date else None,
@@ -75,31 +75,6 @@ class RetrievalPipeline:
             )
         )
         return RetrievalOutput(evidence, events)
-
-    async def retrieve_domain(
-        self,
-        question: str,
-        category: Category,
-        knowledge_index: str,
-    ) -> RetrievalOutput:
-        started = time.perf_counter()
-        response = await self.client.search(
-            KnowledgeSearchRequest(
-                index=knowledge_index,
-                query=question,
-                top_k=self.settings.top_k,
-            )
-        )
-        chunks = [hit.model_dump() for hit in response.hits]
-        evidence = [self.adapter.from_domain_chunk(chunk, category) for chunk in chunks]
-        event = ToolEvent(
-            stage="local_domain_retrieve",
-            status="completed",
-            summary=f"知识库检索完成，确认 {len(evidence)} 条记录。",
-            duration_ms=(time.perf_counter() - started) * 1000,
-            details={"knowledge_index": knowledge_index},
-        )
-        return RetrievalOutput(evidence, [event])
 
     def _adapt_policy(self, chunks: list[dict]) -> list[Evidence]:
         output = []
@@ -111,7 +86,7 @@ class RetrievalPipeline:
                 continue
             seen.add(key)
             output.append(evidence)
-            if len(output) >= self.settings.top_k:
+            if len(output) >= self.settings.retrieval_batch_size:
                 break
         return output
 

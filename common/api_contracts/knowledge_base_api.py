@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 
 
 class KnowledgeSearchRequest(BaseModel):
-    index: str
     query: str
     top_k: int = Field(default=5, ge=1, le=50)
     law_name: str | None = None
@@ -29,5 +28,4 @@ class KnowledgeHit(BaseModel):
 
 
 class KnowledgeSearchResponse(BaseModel):
-    index: str
     hits: list[KnowledgeHit] = Field(default_factory=list)

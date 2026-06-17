@@ -17,6 +17,7 @@ class Category(StrEnum):
     PRICE = "price"
     PRODUCT = "product"
     OTHER = "other"
+    UNCLEAR = "unclear"
 
 
 class SourceType(StrEnum):
@@ -65,19 +66,26 @@ class ContextResolution(BaseModel):
     clarification_question: str | None = None
 
 
-class QuestionClassification(BaseModel):
+class QuestionTask(BaseModel):
+    task_id: str
+    question: str
     category: Category
-    confidence: float = Field(ge=0.0, le=1.0)
-    reasoning: str
-    secondary_categories: list[Category] = Field(default_factory=list)
+    reason: str
+    depends_on: list[str] = Field(default_factory=list)
     entities: list[EntityHint] = Field(default_factory=list)
     requires_fresh_data: bool = False
 
 
-class RouteDecision(BaseModel):
-    category: Category
-    workflow: str
+class QuestionDecomposition(BaseModel):
+    tasks: list[QuestionTask] = Field(default_factory=list)
+    reasoning: str
+    entities: list[EntityHint] = Field(default_factory=list)
+    requires_fresh_data: bool = False
+
+
+class RoutePlan(BaseModel):
     action: Literal["execute", "clarify", "general_answer"]
+    tasks: list[QuestionTask] = Field(default_factory=list)
     reason: str
 
 
@@ -114,6 +122,10 @@ class RetrievalAssessment(BaseModel):
     covered_claims: list[str] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
     freshness_required: bool = False
+    need_more_local_retrieval: bool = False
+    need_official_web_search: bool = False
+    follow_up_queries: list[str] = Field(default_factory=list)
+    usable_evidence_ids: list[str] = Field(default_factory=list)
 
 
 class PolicyQuery(BaseModel):
@@ -235,8 +247,8 @@ class WorkflowResult(BaseModel):
 
 class RunState(BaseModel):
     conversation: ConversationInput
-    classification: QuestionClassification | None = None
-    route: RouteDecision | None = None
+    decomposition: QuestionDecomposition | None = None
+    route_plan: RoutePlan | None = None
     research_plan: ResearchPlan | None = None
     evidence: list[Evidence] = Field(default_factory=list)
     tool_events: list[ToolEvent] = Field(default_factory=list)
@@ -259,6 +271,6 @@ class AskResult(BaseModel):
     route: str
     processing_time: float
     sources: list[dict[str, Any]] = Field(default_factory=list)
-    classification: QuestionClassification | None = None
+    classification: QuestionDecomposition | None = None
     citations: list[Citation] = Field(default_factory=list)
     tool_events: list[ToolEvent] = Field(default_factory=list)

@@ -38,6 +38,11 @@ from agent_layer.workflows.common import (
     format_evidence,
     rank_evidence,
 )
+from agent_layer.workflows.self_rag import (
+    merge_evidence,
+    next_retrieval_queries,
+    select_evidence,
+)
 
 logger = get_logger("agent.workflows.policy")
 
@@ -48,12 +53,15 @@ POLICY_ASSESSMENT_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """你评估本地政策证据是否足以回答问题。只输出指定结构。
-检查材料是否直接回答、法规效力、地域层级、条款完整性、来源冲突和时效。
-不要仅根据相似度判断。missing_information 只列出回答仍缺少的具体信息。
-freshness_required 在问题要求当前有效规则、最新修订或指定历史时点时为 true。""",
+            """你是 Self-RAG 证据评估器，只输出指定结构，不回答业务问题。
+检查证据是否足以直接回答问题，包括法规效力、地域层级、条款完整性、来源冲突和时效。
+sufficient=true 仅在现有证据足以支持最终答案时使用。
+如果本地证据还可能补足，need_more_local_retrieval=true，并在 follow_up_queries 中给出具体检索查询。
+如果需要现行有效性、最新修订、主管部门解释或本地资料缺口无法补足，need_official_web_search=true。
+usable_evidence_ids 只列出对最终答案有用的 evidence_id，不得编造不存在的 evidence_id。
+missing_information 只列出回答仍缺少的具体信息。""",
         ),
-        ("human", "问题：\n{question}\n\n本地证据：\n{evidence}\n\nJSON Schema：\n{schema}"),
+        ("human", "问题：\n{question}\n\n当前证据：\n{evidence}\n\nJSON Schema：\n{schema}"),
     ]
 )
 
@@ -107,6 +115,9 @@ class PolicyAssessmentChain:
                 reason="本地政策库未返回相关证据。",
                 missing_information=["可核验的现行政策依据"],
                 freshness_required=True,
+                need_more_local_retrieval=True,
+                need_official_web_search=True,
+                follow_up_queries=[question],
             )
         try:
             result = await self.chain.with_retry(
@@ -205,64 +216,86 @@ class PolicyWorkflow:
             progress_callback,
         )
 
-        await self._record_event(
-            events,
-            ToolEvent(
-                stage="policy_retrieve",
-                status="started",
-                summary="正在本地政策资料库中查找对应法规和完整条款。",
-            ),
-            progress_callback,
-        )
-        retrieval_output = await self.retrieval.retrieve_policy(
-            standalone_question,
-            policy_query,
-        )
-        evidence = retrieval_output.evidence
-        for event in retrieval_output.events:
-            if event.status != "started":
-                await self._record_event(events, event, progress_callback)
+        evidence = []
+        assessment = RetrievalAssessment(sufficient=False, reason="尚未完成证据评估。")
+        retrieval_queries = [standalone_question]
+        seen_queries = {standalone_question}
 
-        await self._record_event(
-            events,
-            ToolEvent(
-                stage="policy_assessment",
-                status="started",
-                summary="正在检查找到的资料是否足以回答问题，以及法规是否存在时效或地域限制。",
-            ),
-            progress_callback,
-        )
-        assessment_started = time.perf_counter()
-        assessment = await self.assessment.assess(
-            standalone_question,
-            format_evidence(evidence, self.settings.summarize_chunk_length),
-            len(evidence),
-        )
-        if evidence:
-            model_calls += 1
-        await self._record_event(
-            events,
-            ToolEvent(
-                stage="policy_assessment",
-                status="completed",
-                summary=(
-                    "本地资料已经足以支持回答。"
-                    if assessment.sufficient
-                    else "本地资料仍有缺口，正在判断是否需要补充官方来源。"
+        for round_index in range(1, self.settings.max_retrieval_rounds + 1):
+            query = retrieval_queries.pop(0) if retrieval_queries else standalone_question
+            await self._record_event(
+                events,
+                ToolEvent(
+                    stage="policy_retrieve",
+                    status="started",
+                    summary=f"正在执行第 {round_index} 轮本地政策资料检索。",
+                    details={"query": query, "round": round_index},
                 ),
-                duration_ms=(time.perf_counter() - assessment_started) * 1000,
-                details=assessment.model_dump(),
-            ),
-            progress_callback,
-        )
+                progress_callback,
+            )
+            retrieval_output = await self.retrieval.retrieve_policy(query, policy_query)
+            evidence = merge_evidence(evidence, retrieval_output.evidence)
+            for event in retrieval_output.events:
+                if event.status != "started":
+                    await self._record_event(events, event, progress_callback)
 
-        if not assessment.sufficient:
+            await self._record_event(
+                events,
+                ToolEvent(
+                    stage="policy_assessment",
+                    status="started",
+                    summary="正在判断当前证据是否足以回答，或是否需要继续检索。",
+                    details={"round": round_index, "evidence_count": len(evidence)},
+                ),
+                progress_callback,
+            )
+            assessment_started = time.perf_counter()
+            assessment = await self.assessment.assess(
+                standalone_question,
+                format_evidence(
+                    rank_evidence(evidence),
+                    self.settings.evidence_chunk_chars,
+                    max_total_chars=self.settings.evidence_context_chars,
+                ),
+                len(evidence),
+            )
+            if evidence:
+                model_calls += 1
+            await self._record_event(
+                events,
+                ToolEvent(
+                    stage="policy_assessment",
+                    status="completed",
+                    summary=(
+                        "当前证据已经足以支持回答。"
+                        if assessment.sufficient
+                        else "当前证据仍不足，模型已给出后续检索判断。"
+                    ),
+                    duration_ms=(time.perf_counter() - assessment_started) * 1000,
+                    details=assessment.model_dump(),
+                ),
+                progress_callback,
+            )
+            if assessment.sufficient:
+                break
+            if not assessment.need_more_local_retrieval:
+                break
+            follow_up_queries = next_retrieval_queries(
+                assessment,
+                seen_queries,
+                self.settings.max_follow_up_queries,
+            )
+            if not follow_up_queries:
+                break
+            retrieval_queries.extend(follow_up_queries)
+
+        if not assessment.sufficient and assessment.need_official_web_search:
             await self._record_event(
                 events,
                 ToolEvent(
                     stage="policy_internet",
                     status="started",
-                    summary="本地资料存在缺口，正在尝试从官方来源补充核验。",
+                    summary="本地资料仍有缺口，正在按模型判断尝试补充官方来源。",
                 ),
                 progress_callback,
             )
@@ -271,7 +304,7 @@ class PolicyWorkflow:
                 assessment,
                 runtime_context,
             )
-            evidence.extend(internet_evidence)
+            evidence = merge_evidence(evidence, internet_evidence)
             for event in internet_events:
                 await self._record_event(events, event, progress_callback)
 
@@ -288,7 +321,11 @@ class PolicyWorkflow:
                 reassessment_started = time.perf_counter()
                 assessment = await self.assessment.assess(
                     standalone_question,
-                    format_evidence(evidence, self.settings.summarize_chunk_length),
+                    format_evidence(
+                        rank_evidence(evidence),
+                        self.settings.evidence_chunk_chars,
+                        max_total_chars=self.settings.evidence_context_chars,
+                    ),
                     len(evidence),
                 )
                 model_calls += 1
@@ -308,7 +345,7 @@ class PolicyWorkflow:
                     progress_callback,
                 )
 
-        evidence = rank_evidence(evidence)
+        evidence = select_evidence(evidence, assessment)
         if not evidence:
             return WorkflowResult(
                 answer=self.settings.no_results_response,
@@ -317,6 +354,11 @@ class PolicyWorkflow:
             )
 
         citations = build_citations(evidence)
+        evidence_text = format_evidence(
+            evidence,
+            self.settings.evidence_chunk_chars,
+            max_total_chars=self.settings.evidence_context_chars,
+        )
         if not assessment.sufficient:
             missing_information = "、".join(assessment.missing_information)
             answer = f"当前证据不足以可靠回答该政策问题：{assessment.reason}"
@@ -346,7 +388,7 @@ class PolicyWorkflow:
             "original_question": original_question,
             "question": standalone_question,
             "assessment": assessment.model_dump_json(),
-            "evidence": format_evidence(evidence, self.settings.summarize_chunk_length),
+            "evidence": evidence_text,
             "citation_feedback": "",
         }
         answer = await self._generate_answer(answer_input)
@@ -402,7 +444,8 @@ class PolicyWorkflow:
             )
             return [], [event]
 
-        query_text = "；".join(assessment.missing_information) or question
+        query_parts = assessment.follow_up_queries or assessment.missing_information
+        query_text = "；".join(query_parts) or question
         website_query = WebsiteQuery(
             query=f"{question} {query_text}",
             category=Category.POLICY,
@@ -410,7 +453,11 @@ class PolicyWorkflow:
         )
         started = time.perf_counter()
         try:
-            results = await self.internet_client.search(website_query, self.settings.top_k, runtime_context)
+            results = await self.internet_client.search(
+                website_query,
+                self.settings.retrieval_batch_size,
+                runtime_context,
+            )
         except Exception:
             logger.warning("policy internet adapter failed", exc_info=True)
             event = ToolEvent(
@@ -431,6 +478,7 @@ class PolicyWorkflow:
             status="completed",
             summary=f"官方互联网补充完成，确认 {len(evidence)} 条证据。",
             duration_ms=(time.perf_counter() - started) * 1000,
+            details={"query": website_query.query},
         )
         return evidence, [event]
 

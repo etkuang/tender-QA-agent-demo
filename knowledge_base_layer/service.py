@@ -22,13 +22,10 @@ class KnowledgeBaseService:
         self.reranker = reranker
 
     def search(self, request: KnowledgeSearchRequest) -> KnowledgeSearchResponse:
-        collection = self.settings.index_aliases.get(request.index)
-        if collection is None:
-            raise KeyError(request.index)
-
+        collection = self.settings.policy_collection_alias
         as_of_date = request.as_of_date.isoformat() if request.as_of_date else None
         chunks = []
-        if request.index == "policy" and request.article_id:
+        if request.article_id:
             chunks = self.retriever.search_article_exact(
                 collection,
                 request.law_name or "",
@@ -38,9 +35,7 @@ class KnowledgeBaseService:
                 request.top_k * 2,
             )
         if not chunks:
-            scalar_filter = ""
-            if request.index == "policy":
-                scalar_filter = self.retriever.build_policy_filter(as_of_date, request.region)
+            scalar_filter = self.retriever.build_policy_filter(as_of_date, request.region)
             chunks = self.retriever.search(
                 request.query,
                 collection,
@@ -69,4 +64,4 @@ class KnowledgeBaseService:
             )
             for chunk in chunks[: request.top_k]
         ]
-        return KnowledgeSearchResponse(index=request.index, hits=hits)
+        return KnowledgeSearchResponse(hits=hits)

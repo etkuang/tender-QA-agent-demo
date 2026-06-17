@@ -38,32 +38,6 @@ class EvidenceAdapter:
             metadata=self._normalized_metadata(metadata, chunk),
         )
 
-    def from_domain_chunk(self, chunk: dict, category: Category) -> Evidence:
-        metadata = chunk.get("data", {})
-        title = metadata.get("标题") or metadata.get("项目名称") or metadata.get("title") or "本地业务记录"
-        document_id = chunk.get("id") or metadata.get("project_id") or metadata.get("项目编号")
-        published_at = self._parse_datetime(
-            metadata.get("published_at")
-            or metadata.get("发布时间")
-            or metadata.get("中标时间")
-            or metadata.get("updated_at")
-        )
-        return Evidence(
-            evidence_id=self._stable_id(category.value, document_id, chunk.get("text", "")),
-            domain=category,
-            source_type=SourceType.LOCAL_DOCUMENT,
-            title=title,
-            content=chunk.get("text", ""),
-            url=metadata.get("url") or metadata.get("source_url"),
-            document_id=document_id,
-            entity_id=metadata.get("company_id") or metadata.get("企业ID"),
-            published_at=published_at,
-            score=chunk.get("score"),
-            authority_level=1,
-            freshness_level=1 if published_at else 0,
-            metadata=self._normalized_metadata(metadata, chunk),
-        )
-
     def from_search_result(self, result: SearchResult, category: Category) -> Evidence:
         authority = {
             SourceTier.OFFICIAL: 3,

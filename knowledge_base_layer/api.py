@@ -4,7 +4,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header
 
 from common.api_contracts.knowledge_base_api import KnowledgeSearchRequest, KnowledgeSearchResponse
 from common.logger import reset_request_id, set_request_id
@@ -38,7 +38,5 @@ async def search(
     token = set_request_id(x_request_id)
     try:
         return await asyncio.to_thread(app.state.knowledge_base.search, request)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=f"Unknown knowledge index: {exc.args[0]}") from exc
     finally:
         reset_request_id(token)

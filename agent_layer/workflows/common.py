@@ -17,23 +17,38 @@ class DomainProfile(BaseModel):
     freshness_policy: str
     analysis_template: str
     citation_policy: str
-    knowledge_index: str | None = None
 
 
-def format_evidence(evidence: list[Evidence], max_length: int = 1200) -> str:
+def format_evidence(
+    evidence: list[Evidence],
+    max_length: int = 1200,
+    max_chunks: int | None = None,
+    max_total_chars: int | None = None,
+) -> str:
     blocks = []
-    for index, item in enumerate(evidence, 1):
+    total_length = 0
+    selected = evidence[:max_chunks] if max_chunks is not None else evidence
+    for index, item in enumerate(selected, 1):
         metadata = ", ".join(
             f"{key}={value}"
             for key, value in item.metadata.items()
             if value not in (None, "", [], {}) and key not in {"raw_content"}
         )
-        blocks.append(
+        block = (
             f"[{index}] {item.title}\n"
+            f"evidence_id={item.evidence_id}\n"
             f"source_type={item.source_type.value}; published_at={item.published_at}; url={item.url or ''}\n"
             f"metadata={metadata[:500]}\n"
             f"content={item.content[:max_length]}"
         )
+        if max_total_chars is not None:
+            remaining = max_total_chars - total_length
+            if remaining <= 0:
+                break
+            if len(block) > remaining:
+                block = block[:remaining]
+        blocks.append(block)
+        total_length += len(block)
     return "\n\n".join(blocks)
 
 

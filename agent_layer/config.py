@@ -12,31 +12,26 @@ PROJECT_ROOT = AGENT_LAYER_ROOT.parent
 class Settings(BaseSettings):
     """Agent runtime settings without business object construction."""
 
-    app_title: str = "Tender QA Multi-Workflow Agent"
-    app_version: str = "1.0"
-    app_description: str = "Six-domain tender and bidding question answering agent."
-
-    llm_api_key: str = ""
-    llm_api_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4o-mini"
-    llm_max_tokens: int = 1600
+    llm_api_key: str = "sk-u4ZJMre7fxQ7EdAqv7oRaC0Jc0wAfl980Er6kQrHKd304dxY"
+    llm_api_url: str = "https://api.n1n.ai/v1"
+    llm_model: str = "qwen3-32b"
+    llm_max_tokens: int = 1600  # Set the max output tokens per LLM response.
     llm_timeout_seconds: float = 60.0
     structured_output_method: str = "json_mode"
     structured_output_retries: int = 1
 
-    knowledge_base_url: str = "http://127.0.0.1:8010"
+    knowledge_base_url: str
     knowledge_base_timeout_seconds: float = 30.0
-    policy_knowledge_index: str = "policy"
 
-    routing_confidence_high: float = 0.80
-    routing_confidence_low: float = 0.45
-    stream_chunk_size: int = 32
-    recent_history_messages: int = 8
-    context_message_chars: int = 500
+    stream_chunk_size: int = 32  # Max characters per streamed Agent transport chunk.
+    recent_history_messages: int = 8  # Number of recent chat messages used for context resolution.
+    context_message_chars: int = 500  # Max characters kept from each history/context message.
 
-    top_k: int = 5
-    summarize_max_chunks: int = 8
-    summarize_chunk_length: int = 900
+    retrieval_batch_size: int = 8  # Candidate evidence requested per retrieval call.
+    max_retrieval_rounds: int = 3  # Max Self-RAG retrieval-assessment loops per question.
+    max_follow_up_queries: int = 2  # Max model-proposed follow-up queries used per retrieval round.
+    evidence_chunk_chars: int = 900  # Max characters kept from each evidence chunk in LLM prompts.
+    evidence_context_chars: int = 8000  # Max total evidence characters sent to an LLM prompt.
     policy_internet_enabled: bool = True
     policy_preferred_domains: list[str] = ["gov.cn"]
 

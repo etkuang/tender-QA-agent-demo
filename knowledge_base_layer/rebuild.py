@@ -32,7 +32,7 @@ def main() -> None:
     )
     manifest = pipeline.ingest(
         chunks,
-        settings.index_aliases["policy"],
+        settings.policy_collection_alias,
         args.data_version,
         uuid.uuid4().hex,
         publish=args.publish,
