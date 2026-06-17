@@ -8,7 +8,14 @@ from dataclasses import dataclass
 
 from common.logger import get_logger, get_request_id
 from agent_layer.classification.chain import QuestionClassifier
+from agent_layer.checkpoint import LangGraphCheckpointRuntime
 from agent_layer.config import Settings
+from agent_layer.conversation.quick_responses import (
+    DEFAULT_EMPTY_RESPONSE,
+    DEFAULT_QUICK_RESPONSE,
+    QUICK_RESPONSE_KEYWORD_GROUPS,
+    QUICK_RESPONSES,
+)
 from agent_layer.context import ContextResolver
 from agent_layer.errors import AgentError, ClassificationError
 from agent_layer.schemas import (
@@ -30,7 +37,7 @@ from agent_layer.schemas import (
 )
 from agent_layer.workflows.data_domain import DataDomainWorkflow
 from agent_layer.workflows.general import CompositeAnswerWorkflow, GeneralWorkflow
-from agent_layer.workflows.policy import PolicyWorkflow
+from agent_layer.workflows.policy_graph import PolicyGraphWorkflow
 from agent_layer.workflows.router import WorkflowRouter
 
 logger = get_logger("agent.app")
@@ -44,13 +51,17 @@ class ApplicationDependencies:
     router: WorkflowRouter
     general_workflow: GeneralWorkflow
     composite_workflow: CompositeAnswerWorkflow
-    policy_workflow: PolicyWorkflow
+    policy_workflow: PolicyGraphWorkflow
     data_workflows: dict[Category, DataDomainWorkflow]
+    checkpoint_runtime: LangGraphCheckpointRuntime
 
 
 class TenderQAApplication:
     def __init__(self, dependencies: ApplicationDependencies):
         self.dependencies = dependencies
+
+    async def aclose(self) -> None:
+        await self.dependencies.checkpoint_runtime.close()
 
     async def stream(
         self,
@@ -454,19 +465,11 @@ class TenderQAApplication:
     def _quick_response(self, question: str) -> str | None:
         normalized = re.sub(r"[^\u4e00-\u9fa5a-zA-Z0-9]", "", question.strip().lower())
         if not normalized:
-            return "您好，请输入具体问题。"
-        keyword_groups = [
-            self.dependencies.settings.greeting_keywords,
-            self.dependencies.settings.thanks_keywords,
-            self.dependencies.settings.goodbye_keywords,
-        ]
-        for keywords in keyword_groups:
+            return DEFAULT_EMPTY_RESPONSE
+        for keywords in QUICK_RESPONSE_KEYWORD_GROUPS:
             for keyword in keywords:
                 if normalized == keyword or (len(normalized) <= 8 and keyword in normalized):
-                    return self.dependencies.settings.greeting_responses.get(
-                        keyword,
-                        "您好，请问有什么可以帮助您？",
-                    )
+                    return QUICK_RESPONSES.get(keyword, DEFAULT_QUICK_RESPONSE)
         return None
 
     @staticmethod

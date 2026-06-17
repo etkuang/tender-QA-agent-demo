@@ -1,84 +1,39 @@
 # coding: utf-8
 
-import json
 from pathlib import Path
-from typing import Protocol
+from typing import Any
 
-import aiosqlite
-
-
-class CheckpointStore(Protocol):
-    async def save(
-        self,
-        run_id: str,
-        status: str,
-        state: dict,
-    ) -> None: ...
-
-    async def load(self, run_id: str) -> dict | None: ...
-
-    async def delete(self, run_id: str) -> None: ...
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import CheckpointTuple
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 
-class SQLiteCheckpointStore:
-    def __init__(self, path: Path):
+class LangGraphCheckpointRuntime:
+    """Owns the LangGraph SQLite checkpointer for the Agent process lifetime."""
+
+    def __init__(self, path: Path, context: Any, saver: AsyncSqliteSaver):
         self.path = path
+        self.context = context
+        self.saver = saver
 
-    async def save(
-        self,
-        run_id: str,
-        status: str,
-        state: dict,
-    ) -> None:
-        await self._ensure_schema()
-        async with aiosqlite.connect(self.path) as connection:
-            await connection.execute(
-                """
-                INSERT INTO workflow_checkpoints(run_id, status, state_json, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(run_id) DO UPDATE SET
-                    status = excluded.status,
-                    state_json = excluded.state_json,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (run_id, status, json.dumps(state, ensure_ascii=False)),
-            )
-            await connection.commit()
+    @classmethod
+    async def open(cls, path: Path) -> "LangGraphCheckpointRuntime":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        context = AsyncSqliteSaver.from_conn_string(path.as_posix())
+        saver = await context.__aenter__()
+        return cls(path, context, saver)
 
-    async def load(self, run_id: str) -> dict | None:
-        await self._ensure_schema()
-        async with aiosqlite.connect(self.path) as connection:
-            cursor = await connection.execute(
-                "SELECT status, state_json, updated_at FROM workflow_checkpoints WHERE run_id = ?",
-                (run_id,),
-            )
-            row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "run_id": run_id,
-            "status": row[0],
-            "state": json.loads(row[1]),
-            "updated_at": row[2],
-        }
+    def config(self, run_id: str) -> RunnableConfig:
+        return {"configurable": {"thread_id": run_id}}
 
-    async def delete(self, run_id: str) -> None:
-        await self._ensure_schema()
-        async with aiosqlite.connect(self.path) as connection:
-            await connection.execute("DELETE FROM workflow_checkpoints WHERE run_id = ?", (run_id,))
-            await connection.commit()
+    async def load(self, run_id: str) -> CheckpointTuple | None:
+        return await self.saver.aget_tuple(self.config(run_id))
 
-    async def _ensure_schema(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        async with aiosqlite.connect(self.path) as connection:
-            await connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS workflow_checkpoints(
-                    run_id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    state_json TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-            await connection.commit()
+    async def history(self, run_id: str) -> list[CheckpointTuple]:
+        output = []
+        async for checkpoint in self.saver.alist(self.config(run_id)):
+            output.append(checkpoint)
+        return output
+
+    async def close(self) -> None:
+        await self.context.__aexit__(None, None, None)

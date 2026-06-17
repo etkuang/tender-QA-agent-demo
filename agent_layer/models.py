@@ -12,7 +12,7 @@ class ModelFactory:
     def build_chat_model(self, temperature: float = 0.0, max_tokens: int | None = None) -> ChatOpenAI:
         return ChatOpenAI(
             model=self.settings.llm_model,
-            api_key=self.settings.effective_llm_api_key or "missing-key",
+            api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_api_url,
             temperature=temperature,
             max_tokens=max_tokens if max_tokens is not None else self.settings.llm_max_tokens,

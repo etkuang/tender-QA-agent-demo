@@ -12,8 +12,8 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from common.logger import get_logger
 from agent_layer.adapters.base import WebsiteSearchClient
+from agent_layer.conversation.fallback_messages import SOURCE_UNAVAILABLE_RESPONSE
 from agent_layer.config import Settings
-from agent_layer.checkpoint import CheckpointStore
 from agent_layer.errors import (
     AgentError,
     CitationValidationError,
@@ -144,12 +144,11 @@ class DataDomainWorkflow:
         profiles: dict[Category, DomainProfile],
         planner: ResearchPlanner,
         answer_model: BaseChatModel,
-            adapter: EvidenceAdapter,
-            settings: Settings,
-            sql_gateway: SQLGateway | None = None,
-            website_clients: dict[str, WebsiteSearchClient] | None = None,
-            analyzer: DatasetAnalyzer | None = None,
-            checkpoint_store: CheckpointStore | None = None,
+        adapter: EvidenceAdapter,
+        settings: Settings,
+        sql_gateway: SQLGateway | None = None,
+        website_clients: dict[str, WebsiteSearchClient] | None = None,
+        analyzer: DatasetAnalyzer | None = None,
     ):
         self.profile = profile
         self.profiles = profiles
@@ -159,7 +158,6 @@ class DataDomainWorkflow:
         self.sql_gateway = sql_gateway
         self.website_clients = website_clients or {}
         self.analyzer = analyzer or DatasetAnalyzer()
-        self.checkpoint_store = checkpoint_store
         self.answer_chain = DOMAIN_ANSWER_PROMPT | answer_model | StrOutputParser()
 
     async def run(
@@ -214,12 +212,6 @@ class DataDomainWorkflow:
             )
         events = [plan_event]
         await self._report(plan_event, progress_callback)
-        if self.checkpoint_store is not None:
-            await self.checkpoint_store.save(
-                run_id,
-                "planned",
-                {"plan": plan.model_dump(mode="json"), "completed_tasks": []},
-            )
         evidence, execution_events, errors = await self._execute_plan(
             plan,
             allowed_categories,
@@ -232,10 +224,8 @@ class DataDomainWorkflow:
         if not evidence:
             if errors:
                 raise errors[0]
-            if self.checkpoint_store is not None:
-                await self.checkpoint_store.delete(run_id)
             return WorkflowResult(
-                answer=self.settings.source_unavailable_response,
+                answer=SOURCE_UNAVAILABLE_RESPONSE,
                 tool_events=events,
                 model_calls=1,
                 run_id=run_id,
@@ -280,8 +270,6 @@ class DataDomainWorkflow:
             )
         events.append(synthesis_event)
         await self._report(synthesis_event, progress_callback)
-        if self.checkpoint_store is not None:
-            await self.checkpoint_store.delete(run_id)
         return WorkflowResult(
             answer=answer,
             evidence=evidence,
@@ -327,16 +315,6 @@ class DataDomainWorkflow:
                 errors.extend(task_errors)
                 completed.add(task.task_id)
                 pending.pop(task.task_id)
-            if self.checkpoint_store is not None:
-                await self.checkpoint_store.save(
-                    run_id,
-                    "running",
-                    {
-                        "plan": plan.model_dump(mode="json"),
-                        "completed_tasks": sorted(completed),
-                        "evidence": [item.model_dump(mode="json") for item in evidence],
-                    },
-                )
         return evidence, events, errors
 
     async def _execute_task(

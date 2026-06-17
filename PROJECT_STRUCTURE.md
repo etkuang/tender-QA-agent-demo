@@ -1,85 +1,114 @@
 # PROJECT_STRUCTURE.md
 
-## 1) 项目定位
+## 1. Project Purpose
 
-本仓库是一个四进程招投标智能问答系统：
+This repository implements a four-process tender QA system:
 
-- `knowledge_base_layer`：独立知识库服务，负责 PDF 解析、Embedding、Milvus 检索和索引发布。
-- `agent_layer`：负责问题理解、分类、工作流编排、证据评估和答案生成。
-- `app_backend_layer`：负责会话存储和面向前端的 API 网关。
-- `app_frontend_layer`：提供 Streamlit 会话界面。
+- `knowledge_base_layer`: local policy knowledge-base service for PDF ingestion, embedding, Milvus retrieval, fusion, parent-context expansion, and index publishing.
+- `agent_layer`: question understanding, decomposition, routing, policy Self-RAG orchestration, data-domain workflows, SQL gateway contracts, website adapter contracts, and answer synthesis.
+- `app_backend_layer`: backend API gateway and persistent chat-history storage.
+- `app_frontend_layer`: Streamlit chat UI.
 
-Agent 层覆盖政策、招投标、舆情、公司、价格、产品和其他问题七个分类值，其中前六类对应六类专业问答能力。
+The runtime request path is:
 
-## 2) 顶层结构
+Frontend -> Backend -> Agent -> Knowledge Base -> Milvus.
 
-- `main.py`：按顺序启动 Knowledge Base、Agent、Backend 和 Frontend 四个服务。
-- `knowledge_base_layer/`：知识检索服务实现、Milvus、Embedding、PDF 解析和索引发布。
-- `agent_layer/`：分类、上下文解析、工作流、知识库客户端、SQL、安全网关和评测。
-- `app_backend_layer/`：后端 API、会话数据库、日志和配置。
-- `app_frontend_layer/`：前端 UI 和交互组件。
-- `common/`：共享 REST API contracts、request ID 日志上下文和日志器。
-- `history/`：Backend 的 SQLite 会话数据库运行目录。
-- `pyproject.toml`、`uv.lock`：项目依赖和锁文件。
-- `test.py`：独立的代理环境诊断脚本，打印系统代理、环境变量和 Windows 注册表代理配置；不属于自动化测试套件。
-- `招投标六类智能问答系统技术方案报告.docx`：Agent 架构的技术依据。
+The Agent supports policy, tender, public-opinion, company, price, product, other, and unclear task categories. Multi-part questions are decomposed into child tasks and executed through the relevant workflows before final synthesis.
 
-## 3) 启动链路
+## 2. Top-Level Structure
 
-`main.py` 使用以下入口启动四个服务：
+- `main.py`: starts Knowledge Base, Agent, Backend, and Frontend services in order.
+- `knowledge_base_layer/`: policy document ingestion, Milvus retrieval, and `/search` API.
+- `agent_layer/`: Agent API, composition root, LangGraph policy workflow, classification, routing, retrieval adapters, SQL contracts, and data-domain workflows.
+- `app_backend_layer/`: session and message persistence plus Backend API routes.
+- `app_frontend_layer/`: Streamlit frontend and Backend API client.
+- `common/`: shared HTTP DTOs and logging utilities.
+- `history/`: runtime location for Backend chat-history SQLite data.
+- `pyproject.toml` and `uv.lock`: dependencies and lock file.
+- `test.py`: standalone proxy-environment diagnostic script, not an automated test suite.
 
-- Knowledge Base：`uvicorn knowledge_base_layer.api:app`
-- Agent：`uvicorn agent_layer.api:app`
-- Backend：`uvicorn app_backend_layer.api:app`
-- Frontend：`streamlit run app_frontend_layer/app.py`
+## 3. Service Startup And API Boundaries
 
-目标调用链为：Frontend -> Backend -> Agent -> Knowledge Base -> Milvus。
+`main.py` starts:
 
-Agent 对 Backend 暴露 `POST /chat/stream` NDJSON 事件流。Knowledge Base 对 Agent 暴露 `POST /search`，并通过 `X-Request-ID` 传递请求关联标识。`main.py` 动态分配 Knowledge Base 端口，并通过 `KNOWLEDGE_BASE_URL` 注入 Agent 进程。
+- Knowledge Base: `uvicorn knowledge_base_layer.api:app`
+- Agent: `uvicorn agent_layer.api:app`
+- Backend: `uvicorn app_backend_layer.api:app`
+- Frontend: `streamlit run app_frontend_layer/app.py`
 
-## 4) Agent 层
+Agent exposes `POST /chat/stream` as NDJSON through `agent_layer/api.py`.
 
-### 4.1 应用和协议
+Knowledge Base exposes `POST /search` through `knowledge_base_layer/api.py`.
 
-- `api.py`：FastAPI 入口、请求取消检测、异常到稳定错误码的映射、NDJSON 输出。
-- `app.py`：`TenderQAApplication` 应用门面，串联上下文解析、分类、路由、工作流、检查点和指标。
-- `bootstrap.py`：组合根，构造模型、知识库 HTTP 客户端、工作流和应用依赖。
-- `config.py`：LLM、知识库 URL、路由阈值、SQL 和检查点配置。
-- `schemas.py`：分类、实体、证据、研究计划、任务结果、事件和指标等结构化模型。
-- `errors.py`：稳定错误类型及外部模型/网络异常映射。
-- `checkpoint.py`：独立于聊天历史的 SQLite 执行检查点。
+Shared API contracts live in:
 
-Agent 内部事件包括：`route`、`progress`、`reasoning_summary`、`source`、`assistant_delta`、`final`、`error`。`api.py` 在 HTTP 边界将内部事件整理为 Backend 当前契约支持的 `reasoning`、`assistant`、`error`。
+- `common/api_contracts/backend_api.py`: Frontend-Backend DTOs.
+- `common/api_contracts/agent_api.py`: Backend-Agent DTOs.
+- `common/api_contracts/knowledge_base_api.py`: Agent-Knowledge Base DTOs.
 
-Backend-Agent 的请求和流式 DTO 定义在 `common/api_contracts/agent_api.py`。`agent_layer/schemas.py` 只重导出 Agent 内部仍使用的 `Message`、`SessionContext` 和 `GenerationOptions`，不再拥有 HTTP DTO 定义。
+`X-Request-ID` is propagated through request-scoped logging.
 
-### 4.2 分类和上下文
+## 4. Agent Layer
 
-- `classification/chain.py`：基于模型结构化输出的问题分类器。
-- `classification/prompts.py`：六类专业问题和 `other` 的分类约束。
-- `context.py`：解析指代、历史实体和当前问题，生成规范化独立问题。
+### 4.1 Composition And Lifecycle
 
-分类结果包含主分类、次分类、置信度、理由、是否需要新鲜数据和结构化实体。低置信度请求进入澄清路由。
+- `agent_layer/api.py`: FastAPI entrypoint, NDJSON transport formatting, request cancellation checks, and application lifespan.
+- `agent_layer/bootstrap.py`: async composition root. It creates models, clients, workflows, and opens the LangGraph checkpoint runtime.
+- `agent_layer/app.py`: `TenderQAApplication`, streaming orchestration, child-task execution, source streaming, final-event metrics, and application shutdown cleanup.
+- `agent_layer/config.py`: Agent runtime settings for LLM, Knowledge Base, streaming, retrieval budgets, SQL limits, and LangGraph checkpoint path.
+- `agent_layer/checkpoint.py`: `LangGraphCheckpointRuntime`, which owns `langgraph.checkpoint.sqlite.aio.AsyncSqliteSaver` for the Agent process lifetime.
 
-### 4.3 工作流
+`build_application()` is asynchronous because it opens the LangGraph SQLite checkpointer before constructing the policy graph.
 
-- `workflows/router.py`：按分类和置信度选择专业工作流、澄清或通用回答。
-- `workflows/policy.py`：解析政策查询、调用知识库、评估证据充分性，并在配置适配器时补充官方互联网来源。
-- `workflows/data_domain.py`：五类数据域共享的计划、DAG 调度、并发执行、证据汇总和回答流程。
-- `workflows/analysis.py`：对结构化结果执行确定性统计，模型只负责解释。
-- `workflows/common.py`：领域配置、引用标记校验、证据格式化和安全输出辅助。
-- `workflows/general.py`：`other` 类直接回答，不调用专业数据工具。
+`TenderQAApplication.aclose()` closes the LangGraph checkpoint runtime during FastAPI shutdown.
 
-### 4.4 检索边界
+### 4.2 Question Understanding And Routing
 
-- `retrieval/client.py`：异步调用 Knowledge Base `POST /search`。
-- `retrieval/pipeline.py`：将 Agent 的政策或领域查询转换为知识库请求，并把返回结果适配为 Agent 证据。
-- `retrieval/adapter.py`：将知识库、网站和 SQL 结果统一转换为 `Evidence`。
-- `retrieval/chinese_number.py`、`rewrite.py`：条号解析和问题改写辅助。
+- `classification/prompts.py`: prompt for decomposition-first question understanding.
+- `classification/chain.py`: produces `QuestionDecomposition` structured output.
+- `context.py`: resolves conversation context, entities, and standalone question text.
+- `workflows/router.py`: converts `QuestionDecomposition` into `RoutePlan`.
 
-Agent 不再直接持有 Milvus 凭据、Embedding 模型、向量检索、融合、父文档扩展或索引发布逻辑。
+Routing is no longer confidence-threshold based. It uses explicit child tasks and `Category.UNCLEAR` to decide whether to clarify, answer generally, or execute specialized workflows.
 
-### 4.5 五类数据域
+### 4.3 Policy Workflow
+
+Policy execution is split between:
+
+- `workflows/policy.py`: policy prompts and LangChain components:
+  - `PolicyQueryParser`
+  - `PolicyAssessmentChain`
+  - policy answer prompt
+- `workflows/policy_graph.py`: LangGraph `PolicyGraphWorkflow`.
+
+`PolicyGraphWorkflow` builds a `StateGraph` with these nodes:
+
+1. `parse_policy`: extract law name, article id, date, and region.
+2. `retrieve`: retrieve local policy evidence through the Knowledge Base.
+3. `assess`: grade evidence sufficiency with structured output.
+4. `policy_internet`: optional official-internet supplement if an injected adapter is configured.
+5. `synthesize`: produce the final answer with citations.
+
+Conditional edges route from assessment back to retrieval, to official internet search, or to synthesis. If official internet evidence is added, the graph reassesses the expanded evidence set.
+
+The graph is compiled with the LangGraph SQLite checkpointer. Each policy run uses its `run_id` as the LangGraph `thread_id`, so checkpoints are stored by run.
+
+### 4.4 Self-RAG Helpers
+
+- `workflows/self_rag.py`: evidence merging, follow-up query selection, and final evidence selection.
+- `workflows/common.py`: domain profile model, evidence formatting, citation validation, citation building, and evidence ranking.
+
+Self-RAG retrieval budgets are configured by:
+
+- `retrieval_batch_size`
+- `max_retrieval_rounds`
+- `max_follow_up_queries`
+- `evidence_chunk_chars`
+- `evidence_context_chars`
+
+### 4.5 Data-Domain Workflows
+
+Data-domain workflows cover:
 
 - `domains/tender.py`
 - `domains/public_opinion.py`
@@ -87,72 +116,107 @@ Agent 不再直接持有 Milvus 凭据、Embedding 模型、向量检索、融�
 - `domains/price.py`
 - `domains/product.py`
 
-五类数据域当前未配置本地知识索引，`knowledge_index` 均为 `None`。SQL 和网站能力保留，由部署环境注入实际执行器或适配器。
+The shared workflow implementation is `workflows/data_domain.py`.
 
-### 4.6 SQL 和外部数据
+It plans research tasks, executes SQL and website jobs, analyzes structured results, gathers evidence, and synthesizes a final answer. SQL and website capabilities are dependency-injected; missing adapters are reported as skipped rather than fabricated.
 
-- `sql/validator.py`：使用 `sqlglot` AST 校验只读 SQL、视图白名单和强制 `LIMIT`。
-- `sql/gateway.py`：结构化 SQL 生成、校验、只读执行、超时和审计事件。
-- `sql/catalog.py`、`sql/schemas.py`：五类数据域默认视图目录和 SQL 模型。
-- `adapters/`：政策互联网及五类网站数据源的显式抽象接口。
+Current consistency note: `DataDomainWorkflow.__init__()` no longer receives a checkpoint store, but `run()` still contains a leftover `self.checkpoint_store` cleanup branch on the no-evidence path. This is stale code and should be removed or replaced when data-domain workflows are migrated to LangGraph.
 
-具体数据库连接、真实视图 schema、网站端点、凭据和合规策略由部署环境注入。
+### 4.6 SQL Boundary
 
-## 5) Knowledge Base 层
+- `sql/gateway.py`: generates SQL candidates, validates them, executes read-only SQL through an injected executor, and records audit events.
+- `sql/validator.py`: uses `sqlglot` to parse a single read-only SELECT/CTE/UNION statement, restrict views and columns, block sensitive columns, block dangerous functions, and enforce LIMIT.
+- `sql/catalog.py` and `sql/schemas.py`: default view catalog and SQL model schemas.
 
-### 5.1 HTTP 契约和服务
+The current SQL dialect is an internal validator constant:
 
-- `common/api_contracts/knowledge_base_api.py`：Agent 与 Knowledge Base 共用的 `KnowledgeSearchRequest`、`KnowledgeHit` 和 `KnowledgeSearchResponse` 唯一定义。
-- `api.py`：FastAPI 健康检查和搜索接口。
-- `service.py`：逻辑索引解析、精确条款查询、混合检索、父文档扩展和可选重排。
-- `bootstrap.py`：构造 Milvus、Embedding、融合器、检索器和服务。
-- `config.py`：Milvus、Embedding、检索、PDF 和逻辑索引配置。
+- `SQL_DIALECT = "sqlite"`
 
-### 5.2 检索和 Milvus
+The only remaining SQL runtime row cap is:
 
-- `retrieval/milvus.py`：Milvus REST v2 的检索、查询、写入、建集合和 alias 切换实现。
-- `retrieval/retriever.py`：Dense 与 BM25 召回及政策标量过滤。
-- `retrieval/fusion.py`：RRF 或加权融合。
-- `retrieval/parent_context.py`：child 命中后的 parent 回查。
-- `retrieval/reranker.py`：可注入重排器协议。
-- `retrieval/store.py`：向量存储协议。
-- `embeddings.py`：延迟加载本地 Sentence Transformer 模型。
+- `sql_max_rows`: maximum rows returned by a read-only SQL query and enforced as LIMIT.
 
-### 5.3 PDF 重建和发布
+The default Agent application still does not construct a real SQL executor. A read-only executor must be injected for SQL-backed data-domain answers.
 
-- `data/pdf_sources.json`：两份政策 PDF 的路径、版式、来源类型、快照日期和页码范围。
-- `data/pdf/`：政策法规汇编和实务解读原始 PDF。
-- `ingestion/pdf.py`：单栏或双栏 PDF 文本提取、法条识别、父子切块和来源元数据生成。
-- `ingestion/normalizer.py`：统一字段、稳定 ID 和质量问题模型。
-- `ingestion/pipeline.py`：Embedding、版本集合写入和 alias 发布。
-- `rebuild.py`：从 PDF manifest 重建政策集合的命令行入口。
+### 4.7 Website Adapters
 
-当前可重建的本地知识索引只有逻辑索引 `policy`，稳定 alias 默认为 `tender_qa_policy`。旧 Chroma 数据库和 Chroma-to-Milvus 迁移路径已删除。
+- `adapters/base.py`: shared website adapter protocol and base class.
+- `adapters/policy_internet.py`, `tender_web.py`, `public_opinion_web.py`, `company_web.py`, `price_web.py`, `product_web.py`: category marker adapters.
 
-## 6) Backend 层
+The adapter subclasses currently declare only their expected category. Real request construction and response parsing must be implemented by deployment-specific adapters.
 
-- `api.py`：服务入口和会话存储生命周期。
-- `api_routes/chat.py`：加载历史、调用 Agent、透传流并写回历史。
-- `api_routes/sessions.py`：会话列表、消息读取和删除。
-- `history/history_db.py`：SQLite 会话与消息持久化。
+For policy internet evidence, the workflow currently trusts `SourceTier.OFFICIAL` from the injected adapter. It no longer performs domain-suffix verification.
 
-Backend 通过 `AGENT_BASE_URL` 调用 Agent。Frontend-Backend DTO 位于 `common/api_contracts/backend_api.py`；Backend-Agent DTO 位于 `common/api_contracts/agent_api.py`，Backend 显式完成两条边界之间的 stream chunk 适配。
+### 4.8 Schemas And Events
 
-## 7) Frontend 层
+- `schemas.py`: categories, entities, decomposition, route plans, policy queries, evidence, citations, research plans, tool events, workflow results, stream events, and metrics.
+- Internal event types include route, progress, reasoning summary, source, assistant delta, final, and error.
+- `agent_layer/api.py` adapts internal stream events to the Backend transport chunks.
 
-- `app.py`：Streamlit 入口。
-- `api_client.py`：Frontend 到 Backend 的 API 客户端。
-- `components/chat_view.py`：聊天展示和流式消费。
-- `components/sidebar.py`：会话管理和设置。
+## 5. Knowledge Base Layer
 
-Frontend 通过 `BACKEND_URL` 调用 Backend，并与 Backend 共用 `common/api_contracts/backend_api.py` 中的请求和响应模型。
+### 5.1 API And Service
 
-## 8) 运行约束
+- `knowledge_base_layer/api.py`: FastAPI app with health and search endpoints.
+- `service.py`: policy search service, exact article handling, hybrid retrieval, parent context, and optional reranking.
+- `bootstrap.py`: constructs Milvus store, embedding model, fusion, retriever, reranker, and service.
+- `config.py`: Milvus, embedding, retrieval, PDF, and policy collection settings.
 
-1. 项目使用 namespace package，运行时需要把项目根目录加入 `PYTHONPATH`。
-2. 在线知识检索需要可访问的 Milvus 服务及已发布的 `tender_qa_policy` alias。
-3. Embedding 维度必须与 Milvus collection schema 一致，默认维度为 768。
-4. SQL 能力的 `sqlglot` 依赖已在 `pyproject.toml` 和 `uv.lock` 中声明；实际执行仍需要注入只读执行器和审计落地实现。
-5. 网站和政策互联网能力需要注入具体适配器；未配置时不会虚构外部检索结果。
-6. 两份政策 PDF 是截至 2022 年的来源快照，不能直接视为当前有效法律全集。
-7. 当前没有 `agent_layer/tests/` 或 `knowledge_base_layer/tests/` 自动化回归测试目录；顶层 `test.py` 仅用于代理配置诊断。
+The search contract is policy-specific:
+
+- request: query, top_k, optional law name, article id, as-of date, and region.
+- response: list of knowledge hits.
+
+### 5.2 Retrieval And Milvus
+
+- `retrieval/milvus.py`: Milvus REST v2 storage and search implementation.
+- `retrieval/retriever.py`: dense and BM25 recall with policy scalar filters.
+- `retrieval/fusion.py`: reciprocal-rank fusion or weighted fusion.
+- `retrieval/parent_context.py`: parent expansion for child chunks.
+- `retrieval/reranker.py`: injectable reranker protocol.
+- `retrieval/store.py`: vector store protocol.
+- `embeddings.py`: local Sentence Transformer embedding loader.
+
+The active policy alias setting is:
+
+- `policy_collection_alias = "tender_qa_policy"`
+
+### 5.3 PDF Ingestion And Publishing
+
+- `data/pdf_sources.json`: policy PDF manifest.
+- `data/pdf/`: source PDF snapshots.
+- `ingestion/pdf.py`: PDF text extraction, article detection, parent-child chunking, and metadata generation.
+- `ingestion/normalizer.py`: normalized fields, stable ids, and quality issue model.
+- `ingestion/pipeline.py`: embedding, versioned collection writes, and alias publishing.
+- `rebuild.py`: command-line rebuild entrypoint.
+
+Only the local policy index is rebuildable at present.
+
+## 6. Backend Layer
+
+- `app_backend_layer/api.py`: FastAPI service lifecycle.
+- `api_routes/chat.py`: loads session history, calls Agent stream, forwards chunks, and writes conversation history.
+- `api_routes/sessions.py`: session listing, message reading, and deletion.
+- `history/history_db.py`: SQLite storage for sessions and messages.
+- `config.py`: Backend runtime settings, including Agent base URL.
+
+Backend chat history is separate from Agent LangGraph workflow checkpoints.
+
+## 7. Frontend Layer
+
+- `app_frontend_layer/app.py`: Streamlit entrypoint.
+- `api_client.py`: Backend API client.
+- `components/chat_view.py`: streaming chat display.
+- `components/sidebar.py`: session management and settings UI.
+- `config.py`: Frontend runtime settings, including Backend URL.
+
+## 8. Current Runtime Constraints
+
+1. The project uses namespace-style packages; runtime commands must put the project root on `PYTHONPATH`.
+2. Knowledge Base search requires an accessible Milvus service and a published `tender_qa_policy` alias.
+3. Embedding dimensions must match the Milvus collection schema; the default dimension is 768.
+4. Policy internet search requires an injected adapter. The built-in policy adapter is only a marker class.
+5. SQL answers require an injected read-only executor and audit sink. The default app does not create a real database connection.
+6. The two policy PDFs are snapshots through 2022 and should not be treated as a complete current law database.
+7. There is no full automated test suite under `agent_layer/tests/` or `knowledge_base_layer/tests/`; top-level `test.py` is only a proxy diagnostic script.
+8. Data-domain workflow checkpointing is not yet LangGraph-based and contains a leftover stale checkpoint reference as noted above.

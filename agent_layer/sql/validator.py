@@ -3,6 +3,8 @@
 from agent_layer.errors import SQLValidationError
 from agent_layer.sql.schemas import SQLValidationResult, ViewSchema
 
+SQL_DIALECT = "sqlite"
+
 
 class SqlglotValidator:
     """AST validator for one read-only SELECT/CTE statement."""
@@ -18,7 +20,7 @@ class SqlglotValidator:
         "READ_PARQUET",
     }
 
-    def __init__(self, dialect: str, max_rows: int, max_joins: int, max_subqueries: int):
+    def __init__(self, max_rows: int):
         try:
             import sqlglot
             from sqlglot import exp
@@ -26,14 +28,11 @@ class SqlglotValidator:
             raise RuntimeError("The target SQL workflow requires the sqlglot package.") from exc
         self.sqlglot = sqlglot
         self.exp = exp
-        self.dialect = dialect
         self.max_rows = max_rows
-        self.max_joins = max_joins
-        self.max_subqueries = max_subqueries
 
     def validate(self, statement: str, view_schemas: list[ViewSchema]) -> SQLValidationResult:
         try:
-            expressions = self.sqlglot.parse(statement, read=self.dialect)
+            expressions = self.sqlglot.parse(statement, read=SQL_DIALECT)
         except Exception as exc:
             raise SQLValidationError from exc
         if len(expressions) != 1:
@@ -85,18 +84,13 @@ class SqlglotValidator:
         if any(column in sensitive_columns for column in columns):
             raise SQLValidationError
 
-        if sum(1 for _ in tree.find_all(self.exp.Join)) > self.max_joins:
-            raise SQLValidationError
-        if sum(1 for _ in tree.find_all(self.exp.Subquery)) > self.max_subqueries:
-            raise SQLValidationError
-
         for function in tree.find_all(self.exp.Anonymous):
             if function.name.upper() in self.forbidden_function_names:
                 raise SQLValidationError
 
         limit = self._enforce_limit(tree)
         return SQLValidationResult(
-            statement=tree.sql(dialect=self.dialect),
+            statement=tree.sql(dialect=SQL_DIALECT),
             tables=tables,
             columns=columns,
             limit=limit,

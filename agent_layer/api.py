@@ -17,8 +17,11 @@ logger = get_logger("agent.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.application = build_application()
-    yield
+    app.state.application = await build_application()
+    try:
+        yield
+    finally:
+        await app.state.application.aclose()
 
 
 app = FastAPI(lifespan=lifespan)
