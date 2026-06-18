@@ -10,7 +10,7 @@ from typing import Protocol
 import httpx
 from pydantic import BaseModel, Field
 
-from agent_layer.schemas import Category, SearchResult, SessionContext, SourceTier, WebsiteQuery
+from agent_layer.schemas import Category, SearchResult, SourceTier, WebsiteQuery
 
 
 class WebsiteSearchClient(Protocol):
@@ -18,7 +18,6 @@ class WebsiteSearchClient(Protocol):
         self,
         query: WebsiteQuery,
         limit: int,
-        runtime_context: SessionContext,
     ) -> list[SearchResult]: ...
 
 
@@ -56,7 +55,6 @@ class BaseWebsiteAdapter(ABC):
         self,
         query: WebsiteQuery,
         limit: int,
-        runtime_context: SessionContext,
     ) -> list[SearchResult]:
         if query.category != self.expected_category:
             raise ValueError(f"Adapter {self.config.name} cannot serve category {query.category.value}")
@@ -65,7 +63,7 @@ class BaseWebsiteAdapter(ABC):
         if cached and cached[0] > time.monotonic():
             return cached[1]
 
-        request = self.build_request(query, limit, runtime_context)
+        request = self.build_request(query, limit)
         response = await self._send(request)
         results = self.parse_response(response, query, limit)
         normalized = [self._normalize_result(result) for result in results[:limit]]
@@ -77,7 +75,6 @@ class BaseWebsiteAdapter(ABC):
         self,
         query: WebsiteQuery,
         limit: int,
-        runtime_context: SessionContext,
     ) -> WebsiteRequest: ...
 
     @abstractmethod

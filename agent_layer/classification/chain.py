@@ -18,7 +18,7 @@ class QuestionClassifier:
         self.settings = settings
         structured_model = model.with_structured_output(
             QuestionDecomposition,
-            method=settings.structured_output_method,
+            method="json_mode",
         )
         self.chain = QUESTION_DECOMPOSITION_PROMPT | structured_model
 

@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     llm_model: str = "qwen3-32b"
     llm_max_tokens: int = 1600  # Set the max output tokens per LLM response.
     llm_timeout_seconds: float = 60.0
-    structured_output_method: str = "json_mode"
     structured_output_retries: int = 1
 
     knowledge_base_url: str
@@ -36,20 +35,11 @@ class Settings(BaseSettings):
     sql_statement_timeout_seconds: float = 10.0
     sql_max_rows: int = 200  # Max rows returned by a read-only SQL query.
 
-    checkpoint_db_path: str = "agent_layer/data/checkpoints/workflows.sqlite3"  # LangGraph SQLite checkpoints for Agent workflows.
-
     model_config = SettingsConfigDict(env_file=(PROJECT_ROOT / ".env").as_posix())
 
-    @staticmethod
-    def _resolve_from_project(path_value: str) -> Path:
-        path = Path(path_value).expanduser()
-        if path.is_absolute():
-            return path
-        return PROJECT_ROOT / path
-
     @property
-    def checkpoint_path(self) -> Path:
-        return self._resolve_from_project(self.checkpoint_db_path)
+    def checkpoint_path(self) -> Path:  # LangGraph SQLite checkpoints for Agent workflows.
+        return PROJECT_ROOT / "agent_layer/data/checkpoints/workflows.sqlite3"
 
 
 settings = Settings()

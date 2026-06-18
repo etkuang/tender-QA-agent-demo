@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from common.api_contracts.agent_api import GenerationOptions, Message, SessionContext
+from common.api_contracts.agent_api import Message
 
 
 class Category(StrEnum):
@@ -39,7 +39,6 @@ class StreamEventType(StrEnum):
     REASONING_SUMMARY = "reasoning_summary"
     SOURCE = "source"
     ASSISTANT_DELTA = "assistant_delta"
-    FINAL = "final"
     ERROR = "error"
 
 
@@ -228,7 +227,6 @@ class ConversationInput(BaseModel):
     original_question: str
     standalone_question: str
     history_messages: list[Message] = Field(default_factory=list)
-    session_context: SessionContext = Field(default_factory=SessionContext)
     resolved_entities: list[EntityHint] = Field(default_factory=list)
     resolution_traces: list[ResolutionTrace] = Field(default_factory=list)
     ambiguous: bool = False
@@ -261,16 +259,4 @@ class RunState(BaseModel):
 class StreamEvent(BaseModel):
     type: StreamEventType
     content: str = ""
-    code: str | None = None
-    error_id: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
-
-
-class AskResult(BaseModel):
-    answer: str
-    route: str
-    processing_time: float
-    sources: list[dict[str, Any]] = Field(default_factory=list)
-    classification: QuestionDecomposition | None = None
-    citations: list[Citation] = Field(default_factory=list)
-    tool_events: list[ToolEvent] = Field(default_factory=list)

@@ -47,20 +47,13 @@ SOURCE_TYPE_LABELS = {
 def to_transport_chunks(event: StreamEvent) -> list[AgentTransportChunk]:
     size = settings.stream_chunk_size
 
-    def build_chunks(
-        chunk_type: str,
-        content: str,
-        code: str | None = None,
-        error_id: str | None = None,
-    ) -> list[AgentTransportChunk]:
+    def build_chunks(chunk_type: str, content: str) -> list[AgentTransportChunk]:
         if not content:
-            return [AgentTransportChunk(type=chunk_type, content=content, code=code, error_id=error_id)]
+            return [AgentTransportChunk(type=chunk_type, content=content)]
         return [
             AgentTransportChunk(
                 type=chunk_type,
                 content=content[index : index + size],
-                code=code,
-                error_id=error_id,
             )
             for index in range(0, len(content), size)
         ]
@@ -68,7 +61,7 @@ def to_transport_chunks(event: StreamEvent) -> list[AgentTransportChunk]:
     if event.type == StreamEventType.ASSISTANT_DELTA:
         return build_chunks("assistant", event.content)
     if event.type == StreamEventType.ERROR:
-        return build_chunks("error", event.content, event.code, event.error_id)
+        return build_chunks("error", event.content)
     if event.type == StreamEventType.ROUTE:
         return build_chunks("reasoning", _format_route(event))
     if event.type == StreamEventType.REASONING_SUMMARY:
@@ -133,8 +126,6 @@ async def stream_chat(req: AgentStreamRequest, request: Request):
             async for event in request.app.state.application.stream(
                 req.user_message,
                 req.history_messages,
-                req.session_context,
-                req.generation_options,
             ):
                 if await request.is_disconnected():
                     logger.info("agent.stream cancelled by client")

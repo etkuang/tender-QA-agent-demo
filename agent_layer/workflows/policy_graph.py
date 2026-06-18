@@ -23,7 +23,6 @@ from agent_layer.schemas import (
     Evidence,
     PolicyQuery,
     RetrievalAssessment,
-    SessionContext,
     SourceTier,
     ToolEvent,
     WebsiteQuery,
@@ -49,7 +48,6 @@ class PolicyGraphState(TypedDict, total=False):
     run_id: str
     original_question: str
     standalone_question: str
-    runtime_context: SessionContext
     policy_query: PolicyQuery
     evidence: list[Evidence]
     assessment: RetrievalAssessment
@@ -119,7 +117,6 @@ class PolicyGraphWorkflow:
         self,
         original_question: str,
         standalone_question: str,
-        runtime_context: SessionContext,
         progress_callback: ProgressCallback | None = None,
     ) -> WorkflowResult:
         run_id = uuid.uuid4().hex
@@ -129,7 +126,6 @@ class PolicyGraphWorkflow:
             run_id=run_id,
             original_question=original_question,
             standalone_question=standalone_question,
-            runtime_context=runtime_context,
             evidence=[],
             retrieval_queries=[standalone_question],
             seen_queries=[standalone_question],
@@ -261,7 +257,6 @@ class PolicyGraphWorkflow:
         internet_evidence, internet_events = await self._search_internet(
             state["standalone_question"],
             assessment,
-            state["runtime_context"],
         )
         evidence = merge_evidence(state.get("evidence", []), internet_evidence)
         for event in internet_events:
@@ -359,7 +354,6 @@ class PolicyGraphWorkflow:
         self,
         question: str,
         assessment: RetrievalAssessment,
-        runtime_context: SessionContext,
     ) -> tuple[list[Evidence], list[ToolEvent]]:
         if not self.settings.policy_internet_enabled or self.internet_client is None:
             event = ToolEvent(
@@ -381,7 +375,6 @@ class PolicyGraphWorkflow:
             results = await self.internet_client.search(
                 website_query,
                 self.settings.retrieval_batch_size,
-                runtime_context,
             )
         except Exception:
             logger.warning("policy internet adapter failed", exc_info=True)

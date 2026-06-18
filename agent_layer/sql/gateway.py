@@ -10,7 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from common.logger import get_logger, get_request_id
 from agent_layer.config import Settings
 from agent_layer.errors import SQLValidationError
-from agent_layer.schemas import DataResult, ResearchTask, SessionContext
+from agent_layer.schemas import DataResult, ResearchTask
 from agent_layer.sql.schemas import SQLAuditEvent, SQLCandidate, ViewSchema
 from agent_layer.sql.validator import SqlglotValidator
 
@@ -41,7 +41,6 @@ class SQLExecutor(Protocol):
         parameters: dict,
         timeout_seconds: float,
         max_rows: int,
-        runtime_context: SessionContext,
     ) -> DataResult: ...
 
 
@@ -54,7 +53,6 @@ class SQLGateway(Protocol):
         self,
         task: ResearchTask,
         allowed_views: list[str],
-        runtime_context: SessionContext,
     ) -> DataResult: ...
 
 
@@ -70,7 +68,7 @@ class ReadOnlySQLGateway:
     ):
         structured = model.with_structured_output(
             SQLCandidate,
-            method=settings.structured_output_method,
+            method="json_mode",
         )
         self.chain = SQL_GENERATION_PROMPT | structured
         self.validator = validator
@@ -83,7 +81,6 @@ class ReadOnlySQLGateway:
         self,
         task: ResearchTask,
         allowed_views: list[str],
-        runtime_context: SessionContext,
     ) -> DataResult:
         selected_schemas = [self.schemas[name] for name in allowed_views if name in self.schemas]
         if len(selected_schemas) != len(allowed_views):
@@ -115,7 +112,6 @@ class ReadOnlySQLGateway:
                     candidate.parameters,
                     self.settings.sql_statement_timeout_seconds,
                     self.settings.sql_max_rows,
-                    runtime_context,
                 )
             except Exception as exc:
                 await self.audit_sink.record(

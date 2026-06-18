@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field
 
-from agent_layer.schemas import ResearchTask, SessionContext
+from agent_layer.schemas import ResearchTask
 from agent_layer.sql.gateway import SQLGateway
 
 
@@ -30,7 +30,7 @@ async def evaluate_sql(
     failures = []
     for sample in samples:
         try:
-            result = await gateway.execute(sample.task, sample.allowed_views, SessionContext())
+            result = await gateway.execute(sample.task, sample.allowed_views)
         except Exception:
             failures.append(sample.sample_id)
             continue

@@ -1,0 +1,199 @@
+Change log for proposal-only cleanup
+
+Follow-up proposal update on 2026-06-15:
+
+Proposed changes:
+1. Remove non-functional Agent API metadata settings:
+   - app_title
+   - app_version
+   - app_description
+
+2. Make the Agent Knowledge Base URL explicit:
+   - Remove the default value "http://127.0.0.1:8010".
+   - Keep knowledge_base_url as a required runtime setting.
+   - Keep main.py as the normal source of KNOWLEDGE_BASE_URL injection.
+
+3. Remove policy_knowledge_index from Agent settings:
+   - The policy route already determines that policy retrieval is being used.
+   - A runtime setting should not decide the RAG path.
+
+4. Simplify the Agent-to-Knowledge-Base search contract:
+   - Remove index from KnowledgeSearchRequest.
+   - Remove index from KnowledgeSearchResponse.
+   - The current Knowledge Base search endpoint becomes policy-specific.
+
+5. Simplify policy retrieval:
+   - RetrievalPipeline.retrieve_policy no longer sends an index value.
+   - It sends only query, top_k, law_name, article_id, as_of_date, and region.
+
+6. Remove the generic local-domain Knowledge Base path:
+   - Delete RetrievalPipeline.retrieve_domain.
+   - Delete EvidenceAdapter.from_domain_chunk.
+   - Remove DataDomainWorkflow local Knowledge Base scheduling and execution.
+   - Remove DomainProfile.knowledge_index and its None values in domain profiles.
+
+7. Simplify Knowledge Base Milvus alias configuration:
+   - Replace index_aliases = {"policy": "tender_qa_policy"} with policy_collection_alias = "tender_qa_policy".
+   - Use policy_collection_alias in KnowledgeBaseService.search and rebuild.py.
+
+8. Remove Knowledge Base index branching:
+   - Delete request.index == "policy" checks.
+   - Run article-exact retrieval and policy scalar filtering unconditionally inside the policy Knowledge Base search path.
+   - Remove unknown-index HTTP handling from knowledge_base_layer/api.py.
+
+Follow-up proposal update on 2026-06-16:
+
+Proposed changes:
+1. Replace the old single-category classification contract with decomposition-first question understanding:
+   - Add Category.UNCLEAR.
+   - Add QuestionTask, QuestionDecomposition, and RoutePlan.
+   - Delete QuestionClassification and RouteDecision.
+
+2. Remove confidence-based routing:
+   - Rewrite WorkflowRouter.decide to consume QuestionDecomposition.
+   - Route by explicit child-task categories and the unclear category.
+   - Remove routing_confidence_high and routing_confidence_low from Settings.
+
+3. Update the classification chain and prompt:
+   - Replace CLASSIFICATION_PROMPT with QUESTION_DECOMPOSITION_PROMPT.
+   - Make QuestionClassifier return QuestionDecomposition.
+   - Require child tasks to use one category each and express dependencies through depends_on.
+
+4. Update application orchestration:
+   - Store decomposition and route-plan state instead of classification and route-decision state.
+   - Execute decomposed child tasks through a route plan.
+   - Share entities, dependent child answers, evidence, citations, and tool events across child tasks.
+
+5. Add final multi-task synthesis:
+   - Add CompositeAnswerWorkflow.
+   - Combine child workflow answers and shared evidence into one final answer.
+   - Include composite_synthesis in generation metrics.
+
+6. Update Agent stream and result metadata:
+   - Format route events as question decomposition output.
+   - Remove confidence display from route reasoning.
+   - Return QuestionDecomposition in AskResult classification metadata.
+
+7. Wire the new workflow dependencies:
+   - Import and construct CompositeAnswerWorkflow in bootstrap.
+   - Inject composite_workflow into ApplicationDependencies.
+
+Follow-up proposal update on 2026-06-17:
+
+Proposed changes:
+1. Replace fixed final top-N retrieval with Self-RAG retrieval budgets:
+   - Replace top_k with retrieval_batch_size.
+   - Add max_retrieval_rounds and max_follow_up_queries.
+   - Replace summarize_max_chunks and summarize_chunk_length with evidence_chunk_chars and evidence_context_chars.
+
+2. Extend evidence sufficiency assessment:
+   - Add flags for more local retrieval and official web search.
+   - Let the model propose follow-up retrieval queries.
+   - Let the model identify usable evidence IDs for final answer synthesis.
+
+3. Add workflow-level Self-RAG helpers:
+   - Add agent_layer/workflows/self_rag.py.
+   - Centralize evidence merging, follow-up query selection, and final evidence selection.
+
+4. Convert the policy workflow to an iterative Self-RAG loop:
+   - Parse policy query conditions once.
+   - Retrieve candidate evidence in batches.
+   - Ask the model whether evidence is sufficient.
+   - Continue local retrieval when the model requests it and the retrieval budget allows it.
+   - Use official web search only when the model marks it necessary.
+
+5. Update evidence prompt packing:
+   - Include evidence_id in formatted evidence.
+   - Enforce per-evidence and total evidence context budgets.
+   - Use selected evidence for citations and final answer synthesis.
+
+6. Update related workflows to use the new evidence budget names:
+   - Composite answer synthesis uses evidence_chunk_chars and evidence_context_chars.
+   - Data-domain answer synthesis uses the same evidence budget settings.
+   - Website adapter calls use retrieval_batch_size as a candidate batch limit.
+
+7. Apply stream_chunk_size consistently at the Agent transport boundary:
+   - Clarify stream_chunk_size as the max Agent transport chunk size.
+   - Chunk assistant, reasoning, and error output consistently in agent_layer/api.py.
+
+V0.55 release
+
+8. Remove incomplete policy website domain-suffix verification:
+   - Drop policy_preferred_domains, urlparse, and PolicyWorkflow._is_preferred_domain.
+   - Keep only SourceTier.OFFICIAL filtering until a real policy internet adapter verifies official sources.
+
+9. Simplify SQL validator configuration:
+   - Remove sql_max_joins, sql_max_subqueries, and sql_dialect from settings.
+   - Remove the matching validator constructor state and join/subquery count checks.
+
+10. Make SQL dialect and row limiting clearer:
+   - Use an internal SQLite SQLGlot dialect constant for current parsing and normalization.
+   - Keep sql_max_rows for read-only execution and LIMIT enforcement, with a clarifying comment.
+
+11. Replace handmade workflow checkpointing with LangGraph checkpoint runtime:
+   - Replace the custom SQLiteCheckpointStore with a LangGraph AsyncSqliteSaver runtime.
+   - Keep the SQLite checkpointer open for the Agent app lifetime and close it on shutdown.
+
+12. Convert policy Self-RAG into a LangGraph state machine:
+   - Add a PolicyGraphWorkflow built with StateGraph.
+   - Model parse, retrieve, assess, official-internet fallback, and synthesize as graph nodes.
+
+13. Add conditional Self-RAG graph routing:
+   - Route from assessment back to retrieval, to official internet search, or to synthesis.
+   - Reassess evidence after successful official-internet supplementation.
+
+14. Preserve workflow progress and output contracts:
+   - Keep ToolEvent progress callbacks and WorkflowResult output.
+   - Return the LangGraph run_id as the checkpoint thread_id for persisted graph state.
+
+15. Remove fake data-domain checkpoint writes:
+   - Stop injecting the handmade checkpoint store into data-domain workflows.
+   - Remove manual planned/running/delete checkpoint calls until data-domain workflows are separately migrated to LangGraph.
+
+Follow-up proposal update on 2026-06-18:
+
+Proposed changes:
+1. Move Agent user-facing response copy out of Settings:
+   - Add agent_layer/conversation/quick_responses.py for small-talk keywords and canned replies.
+   - Add agent_layer/conversation/fallback_messages.py for no-evidence fallback messages.
+
+2. Keep Agent Settings focused on runtime configuration:
+   - Remove no_results_response, source_unavailable_response, greeting_responses, greeting_keywords, thanks_keywords, and goodbye_keywords from agent_layer/config.py.
+
+3. Simplify LLM API key handling:
+   - Remove Settings.effective_llm_api_key.
+   - Use settings.llm_api_key directly in ModelFactory.
+   - Keep LLM_API_KEY and LLM_API_URL in the root .env.
+
+4. Preserve dynamic service URL injection:
+   - Do not put KNOWLEDGE_BASE_URL in .env.
+   - Keep main.py as the source of the dynamically assigned Knowledge Base URL through the Agent process environment.
+
+5. Fix the data-domain no-evidence fallback path:
+   - Remove the stale self.checkpoint_store reference.
+   - Return SOURCE_UNAVAILABLE_RESPONSE from the dedicated fallback message module.
+
+6. Simplify the Agent stream request and context path:
+   - Remove session_context and generation_options from AgentStreamRequest.
+   - Stop passing SessionContext through context resolution, Agent orchestration, workflows, website adapters, SQL gateway execution, and SQL evaluation.
+   - Resolve conversation context from user_message and persisted history only.
+
+7. Always stream Agent progress as reasoning:
+   - Remove the include_progress switch.
+   - Emit all Agent progress events unconditionally so the transport layer continues sending them as reasoning chunks.
+
+8. Tighten Agent message and error transport contracts:
+   - Restrict Message.role to user and assistant because the Backend never supplies system messages.
+   - Remove code and error_id from AgentTransportChunk and StreamEvent because no current component consumes them.
+   - Simplify Agent error-event and transport-chunk construction accordingly.
+
+9. Remove the unused non-streaming and final-event path:
+   - Delete TenderQAApplication.ask, AskResult, StreamEventType.FINAL, and all final-event emissions.
+   - Delete _route_name, _final_event, _source_distribution, final-event metrics, and unconsumed final metadata.
+   - Keep StreamEvent.data because active route, progress, and source formatting still consumes it.
+
+10. Fix structured output to the project implementation choice:
+   - Remove structured_output_method from Agent Settings.
+   - Pass method="json_mode" directly at every with_structured_output call site.
+
+V0.57 release

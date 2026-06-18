@@ -27,7 +27,6 @@ from agent_layer.schemas import (
     Evidence,
     ResearchPlan,
     ResearchTask,
-    SessionContext,
     ToolEvent,
     WebsiteQuery,
     WorkflowResult,
@@ -90,7 +89,7 @@ class ResearchPlanner:
         self.settings = settings
         structured = model.with_structured_output(
             ResearchPlan,
-            method=settings.structured_output_method,
+            method="json_mode",
         )
         self.chain = RESEARCH_PLAN_PROMPT | structured
 
@@ -166,7 +165,6 @@ class DataDomainWorkflow:
         entities: list,
         secondary_categories: list[Category],
         requires_fresh_data: bool,
-        runtime_context: SessionContext,
         progress_callback: ProgressCallback | None = None,
     ) -> WorkflowResult:
         run_id = uuid.uuid4().hex
@@ -216,7 +214,6 @@ class DataDomainWorkflow:
             plan,
             allowed_categories,
             run_id,
-            runtime_context,
             progress_callback,
         )
         events.extend(execution_events)
@@ -284,7 +281,6 @@ class DataDomainWorkflow:
         plan: ResearchPlan,
         allowed_categories: list[Category],
         run_id: str,
-        runtime_context: SessionContext,
         progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
         pending = {task.task_id: task for task in plan.tasks}
@@ -302,7 +298,6 @@ class DataDomainWorkflow:
                         task,
                         plan,
                         allowed_categories,
-                        runtime_context,
                         progress_callback,
                     )
                     for task in ready
@@ -322,7 +317,6 @@ class DataDomainWorkflow:
         task: ResearchTask,
         plan: ResearchPlan,
         allowed_categories: list[Category],
-        runtime_context: SessionContext,
         progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
         category = task.domain or self.profile.category
@@ -340,9 +334,9 @@ class DataDomainWorkflow:
         )
         jobs = []
         if task.preferred_source in {"sql", "both"}:
-            jobs.append(self._execute_sql(task, profile, runtime_context, progress_callback))
+            jobs.append(self._execute_sql(task, profile, progress_callback))
         if task.preferred_source in {"website", "both"}:
-            jobs.append(self._execute_web(task, plan, profile, runtime_context, progress_callback))
+            jobs.append(self._execute_web(task, plan, profile, progress_callback))
         if not jobs:
             event = ToolEvent(stage=task.task_id, status="skipped", summary="该查询任务没有可用的数据来源。")
             await self._report(event, progress_callback)
@@ -369,7 +363,6 @@ class DataDomainWorkflow:
         self,
         task: ResearchTask,
         profile: DomainProfile,
-        runtime_context: SessionContext,
         progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
         if self.sql_gateway is None:
@@ -382,7 +375,7 @@ class DataDomainWorkflow:
         )
         started = time.perf_counter()
         try:
-            result = await self.sql_gateway.execute(task, profile.sql_views, runtime_context)
+            result = await self.sql_gateway.execute(task, profile.sql_views)
         except AgentError as exc:
             event = ToolEvent(stage="sql", status="failed", summary=exc.user_message)
             await self._report(event, progress_callback)
@@ -414,7 +407,6 @@ class DataDomainWorkflow:
         task: ResearchTask,
         plan: ResearchPlan,
         profile: DomainProfile,
-        runtime_context: SessionContext,
         progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
         clients = [self.website_clients[name] for name in profile.website_adapters if name in self.website_clients]
@@ -436,7 +428,7 @@ class DataDomainWorkflow:
         )
         started = time.perf_counter()
         results = await asyncio.gather(
-            *(client.search(query, self.settings.retrieval_batch_size, runtime_context) for client in clients),
+            *(client.search(query, self.settings.retrieval_batch_size) for client in clients),
             return_exceptions=True,
         )
         evidence = []

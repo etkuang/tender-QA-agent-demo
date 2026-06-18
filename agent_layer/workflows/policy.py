@@ -24,7 +24,6 @@ from agent_layer.schemas import (
     Category,
     PolicyQuery,
     RetrievalAssessment,
-    SessionContext,
     SourceTier,
     ToolEvent,
     WebsiteQuery,
@@ -103,7 +102,7 @@ class PolicyAssessmentChain:
         self.settings = settings
         structured = model.with_structured_output(
             RetrievalAssessment,
-            method=settings.structured_output_method,
+            method="json_mode",
         )
         self.chain = POLICY_ASSESSMENT_PROMPT | structured
 
@@ -140,7 +139,7 @@ class PolicyQueryParser:
     def __init__(self, model: BaseChatModel, settings: Settings):
         structured = model.with_structured_output(
             PolicyQuery,
-            method=settings.structured_output_method,
+            method="json_mode",
         )
         self.chain = POLICY_QUERY_PROMPT | structured
         self.settings = settings
