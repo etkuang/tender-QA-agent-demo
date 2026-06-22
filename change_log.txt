@@ -197,3 +197,65 @@ Proposed changes:
    - Pass method="json_mode" directly at every with_structured_output call site.
 
 V0.57 release
+
+Follow-up proposal update on 2026-06-20:
+
+Proposed changes:
+1. Unify conversational contextualization and question decomposition:
+   - Extend QuestionDecomposition with standalone_question, resolved_entities, ambiguous, and clarification_question.
+   - Give the structured classifier the current question and bounded recent conversation.
+   - Handle anaphora, elliptical follow-ups, ambiguity, entity resolution, classification, and task decomposition in one model call.
+
+2. Remove the separate context-resolution path:
+   - Delete ContextResolver, QuestionRewriter, their prompts, regex fast path, bootstrap wiring, and dedicated error type.
+   - Remove obsolete context-resolution, trace, conversation, run-state, metric, and error schemas.
+
+3. Simplify Agent orchestration around unified question understanding:
+   - Format recent history once for classification and general-answer prompts.
+   - Pass the original question, standalone question, resolved entities, and formatted history explicitly to downstream workflows.
+   - Clarify ambiguous references before routing instead of guessing an entity.
+
+4. Align classification evaluation with decomposition output:
+   - Replace single-category samples and confusion-matrix logic with expected category sets.
+   - Evaluate exact category-set matches and multi-label macro F1.
+
+Follow-up proposal update on 2026-06-22:
+
+Proposed changes:
+1. Replace the decomposition envelope with a direct child-task classification contract:
+   - Replace QuestionTask with ChildTask.
+   - Return a JSON array through a Pydantic root model.
+   - Keep task_id, question, category, depends_on, requires_fresh_data, and clarification_question.
+
+2. Simplify question understanding while preserving anaphora resolution:
+   - Resolve references directly in each self-contained child question.
+   - Remove standalone_question, reasoning, global ambiguity and freshness fields, and classification-level entities.
+   - Represent ambiguity with category=unclear and a task-level clarification_question.
+
+3. Route directly from child tasks:
+   - Derive execute, general-answer, and clarification actions from the child-task list.
+   - Combine clarification questions emitted by unclear child tasks.
+
+4. Preserve dependent task execution:
+   - Keep depends_on scheduling and concurrent execution of ready tasks.
+   - Inject completed dependency answers into dependent child tasks.
+
+5. Preserve bounded conversation context across workflows:
+   - Keep recent_history_messages and context_message_chars unchanged.
+   - Serialize roles and bounded message content without additional summarization or standalone rewriting.
+   - Pass the same context to classification, child planning, answer generation, and final synthesis.
+
+6. Move entity extraction to domain-specific planning:
+   - Remove generic entities and confidence values from classification output.
+   - Let policy and data planners derive only the entities and attributes required by their tools.
+
+7. Tighten quick-response handling:
+   - Replace substring matching with exact normalized aliases.
+   - Return structured response kinds for empty input, greetings, thanks, and farewells.
+   - Handle quick responses before emitting decomposition progress.
+
+8. Align downstream contracts with the new classification result:
+   - Update data, policy, general, composite, application, policy-graph, and transport paths to consume resolved child tasks.
+   - Update route formatting and classification evaluation for the child-task list.
+
+V0.58 release

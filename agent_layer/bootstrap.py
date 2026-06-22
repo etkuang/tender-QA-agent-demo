@@ -5,7 +5,6 @@ from agent_layer.app import ApplicationDependencies, TenderQAApplication
 from agent_layer.classification.chain import QuestionClassifier
 from agent_layer.checkpoint import LangGraphCheckpointRuntime
 from agent_layer.config import Settings, settings
-from agent_layer.context import ContextResolver
 from agent_layer.domains.company import build_company_profile
 from agent_layer.domains.price import build_price_profile
 from agent_layer.domains.product import build_product_profile
@@ -15,7 +14,6 @@ from agent_layer.models import ModelFactory
 from agent_layer.retrieval.adapter import EvidenceAdapter
 from agent_layer.retrieval.client import KnowledgeBaseClient
 from agent_layer.retrieval.pipeline import RetrievalPipeline
-from agent_layer.retrieval.rewrite import QuestionRewriter
 from agent_layer.sql.gateway import SQLGateway
 from agent_layer.workflows.analysis import DatasetAnalyzer
 from agent_layer.workflows.data_domain import DataDomainWorkflow, ResearchPlanner
@@ -44,7 +42,6 @@ async def build_application(
     )
 
     classifier = QuestionClassifier(structured_model, runtime_settings)
-    context_resolver = ContextResolver(QuestionRewriter(), structured_model, runtime_settings)
     router = WorkflowRouter(runtime_settings)
     general_workflow = GeneralWorkflow(answer_model)
     composite_workflow = CompositeAnswerWorkflow(answer_model, runtime_settings)
@@ -89,7 +86,6 @@ async def build_application(
 
     dependencies = ApplicationDependencies(
         settings=runtime_settings,
-        context_resolver=context_resolver,
         classifier=classifier,
         router=router,
         general_workflow=general_workflow,

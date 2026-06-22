@@ -79,13 +79,15 @@ def _format_route(event: StreamEvent) -> str:
         return f"- 问题判断：{event.content}\n\n"
     tasks = classification.get("tasks", [])
     if not tasks:
-        return f"- 问题判断：{classification['reasoning']}\n\n"
+        return f"- 问题判断：{event.content}\n\n"
     task_text = "；".join(
         f"{task['task_id']}“{task['question']}”归为{CATEGORY_LABELS[task['category']]}"
         for task in tasks
     )
-    freshness = "其中包含需要较新数据的子问题" if classification["requires_fresh_data"] else "不要求实时数据"
-    return f"- 问题拆解：{task_text}。{freshness}。总体依据是：{classification['reasoning']}\n\n"
+    freshness = "其中包含需要较新数据的子问题" if any(
+        task["requires_fresh_data"] for task in tasks
+    ) else "不要求实时数据"
+    return f"- 问题拆解：{task_text}。{freshness}。\n\n"
 
 
 def _format_progress(event: StreamEvent) -> str:

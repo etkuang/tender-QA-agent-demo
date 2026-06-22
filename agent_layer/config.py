@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     knowledge_base_timeout_seconds: float = 30.0
 
     stream_chunk_size: int = 32  # Max characters per streamed Agent transport chunk.
-    recent_history_messages: int = 8  # Number of recent chat messages used for context resolution.
-    context_message_chars: int = 500  # Max characters kept from each history/context message.
+    recent_history_messages: int = 8  # Number of recent chat messages used for question understanding.
+    context_message_chars: int = 500  # Max characters kept from each recent history message.
 
     retrieval_batch_size: int = 8  # Candidate evidence requested per retrieval call.
     max_retrieval_rounds: int = 3  # Max Self-RAG retrieval-assessment loops per question.

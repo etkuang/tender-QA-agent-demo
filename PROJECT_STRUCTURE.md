@@ -54,7 +54,7 @@ Shared API contracts live in:
 
 - `agent_layer/api.py`: FastAPI entrypoint, NDJSON transport formatting, request cancellation checks, and application lifespan.
 - `agent_layer/bootstrap.py`: async composition root. It creates models, clients, workflows, and opens the LangGraph checkpoint runtime.
-- `agent_layer/app.py`: `TenderQAApplication`, streaming orchestration, child-task execution, source streaming, final-event metrics, and application shutdown cleanup.
+- `agent_layer/app.py`: `TenderQAApplication`, streaming orchestration, child-task execution, source streaming, and application shutdown cleanup.
 - `agent_layer/config.py`: Agent runtime settings for LLM, Knowledge Base, streaming, retrieval budgets, SQL limits, and LangGraph checkpoint path.
 - `agent_layer/checkpoint.py`: `LangGraphCheckpointRuntime`, which owns `langgraph.checkpoint.sqlite.aio.AsyncSqliteSaver` for the Agent process lifetime.
 
@@ -66,7 +66,7 @@ Shared API contracts live in:
 
 - `classification/prompts.py`: prompt for decomposition-first question understanding.
 - `classification/chain.py`: produces `QuestionDecomposition` structured output.
-- `context.py`: resolves conversation context, entities, and standalone question text.
+- Conversation context, entities, and standalone question text are resolved by the classification prompt and chain.
 - `workflows/router.py`: converts `QuestionDecomposition` into `RoutePlan`.
 
 Routing is no longer confidence-threshold based. It uses explicit child tasks and `Category.UNCLEAR` to decide whether to clarify, answer generally, or execute specialized workflows.
@@ -120,7 +120,7 @@ The shared workflow implementation is `workflows/data_domain.py`.
 
 It plans research tasks, executes SQL and website jobs, analyzes structured results, gathers evidence, and synthesizes a final answer. SQL and website capabilities are dependency-injected; missing adapters are reported as skipped rather than fabricated.
 
-Current consistency note: `DataDomainWorkflow.__init__()` no longer receives a checkpoint store, but `run()` still contains a leftover `self.checkpoint_store` cleanup branch on the no-evidence path. This is stale code and should be removed or replaced when data-domain workflows are migrated to LangGraph.
+Data-domain workflows do not currently use checkpoint persistence. They can be migrated independently if resumable data-domain execution is required later.
 
 ### 4.6 SQL Boundary
 
@@ -150,7 +150,7 @@ For policy internet evidence, the workflow currently trusts `SourceTier.OFFICIAL
 ### 4.8 Schemas And Events
 
 - `schemas.py`: categories, entities, decomposition, route plans, policy queries, evidence, citations, research plans, tool events, workflow results, stream events, and metrics.
-- Internal event types include route, progress, reasoning summary, source, assistant delta, final, and error.
+- Internal event types include route, progress, reasoning summary, source, assistant delta, and error.
 - `agent_layer/api.py` adapts internal stream events to the Backend transport chunks.
 
 ## 5. Knowledge Base Layer
@@ -219,4 +219,3 @@ Backend chat history is separate from Agent LangGraph workflow checkpoints.
 5. SQL answers require an injected read-only executor and audit sink. The default app does not create a real database connection.
 6. The two policy PDFs are snapshots through 2022 and should not be treated as a complete current law database.
 7. There is no full automated test suite under `agent_layer/tests/` or `knowledge_base_layer/tests/`; top-level `test.py` is only a proxy diagnostic script.
-8. Data-domain workflow checkpointing is not yet LangGraph-based and contains a leftover stale checkpoint reference as noted above.

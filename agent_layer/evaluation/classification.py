@@ -1,6 +1,6 @@
 # coding: utf-8
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_layer.classification.chain import QuestionClassifier
 from agent_layer.schemas import Category
@@ -9,15 +9,14 @@ from agent_layer.schemas import Category
 class ClassificationSample(BaseModel):
     sample_id: str
     question: str
-    expected_category: Category
-    context_summary: str = ""
+    expected_categories: list[Category] = Field(default_factory=list)
+    history: str = ""
 
 
 class ClassificationEvaluation(BaseModel):
     total: int
-    accuracy: float
+    exact_match_accuracy: float
     macro_f1: float
-    confusion_matrix: dict[str, dict[str, int]]
     failures: list[str]
 
 
@@ -25,30 +24,37 @@ async def evaluate_classification(
     classifier: QuestionClassifier,
     samples: list[ClassificationSample],
 ) -> ClassificationEvaluation:
-    labels = [category.value for category in Category]
-    matrix = {expected: {predicted: 0 for predicted in labels} for expected in labels}
+    labels = list(Category)
+    counts = {label: {"true_positive": 0, "false_positive": 0, "false_negative": 0} for label in labels}
     failures = []
-    correct = 0
+    exact_matches = 0
     for sample in samples:
-        result = await classifier.classify(sample.question, sample.context_summary)
-        matrix[sample.expected_category.value][result.category.value] += 1
-        if result.category == sample.expected_category:
-            correct += 1
+        tasks = await classifier.classify(sample.question, sample.history)
+        expected = set(sample.expected_categories)
+        predicted = {task.category for task in tasks}
+        if predicted == expected:
+            exact_matches += 1
         else:
             failures.append(sample.sample_id)
+        for label in labels:
+            if label in expected and label in predicted:
+                counts[label]["true_positive"] += 1
+            elif label not in expected and label in predicted:
+                counts[label]["false_positive"] += 1
+            elif label in expected and label not in predicted:
+                counts[label]["false_negative"] += 1
     f1_scores = []
     for label in labels:
-        true_positive = matrix[label][label]
-        false_positive = sum(matrix[other][label] for other in labels if other != label)
-        false_negative = sum(matrix[label][other] for other in labels if other != label)
+        true_positive = counts[label]["true_positive"]
+        false_positive = counts[label]["false_positive"]
+        false_negative = counts[label]["false_negative"]
         precision = true_positive / (true_positive + false_positive) if true_positive + false_positive else 0
         recall = true_positive / (true_positive + false_negative) if true_positive + false_negative else 0
         f1_scores.append(2 * precision * recall / (precision + recall) if precision + recall else 0)
     total = len(samples)
     return ClassificationEvaluation(
         total=total,
-        accuracy=correct / total if total else 0,
+        exact_match_accuracy=exact_matches / total if total else 0,
         macro_f1=sum(f1_scores) / len(f1_scores),
-        confusion_matrix=matrix,
         failures=failures,
     )

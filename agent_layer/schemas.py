@@ -4,9 +4,7 @@ from datetime import date, datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
-
-from common.api_contracts.agent_api import Message
+from pydantic import BaseModel, Field, RootModel
 
 
 class Category(StrEnum):
@@ -49,42 +47,22 @@ class EntityHint(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
-class ResolutionTrace(BaseModel):
-    expression: str
-    selected_entity: EntityHint | None = None
-    candidate_entities: list[EntityHint] = Field(default_factory=list)
-    basis: str
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-
-
-class ContextResolution(BaseModel):
-    standalone_question: str
-    entities: list[EntityHint] = Field(default_factory=list)
-    traces: list[ResolutionTrace] = Field(default_factory=list)
-    ambiguous: bool = False
-    clarification_question: str | None = None
-
-
-class QuestionTask(BaseModel):
+class ChildTask(BaseModel):
     task_id: str
     question: str
     category: Category
-    reason: str
     depends_on: list[str] = Field(default_factory=list)
-    entities: list[EntityHint] = Field(default_factory=list)
     requires_fresh_data: bool = False
+    clarification_question: str | None = None
 
 
-class QuestionDecomposition(BaseModel):
-    tasks: list[QuestionTask] = Field(default_factory=list)
-    reasoning: str
-    entities: list[EntityHint] = Field(default_factory=list)
-    requires_fresh_data: bool = False
+class ChildTaskList(RootModel[list[ChildTask]]):
+    pass
 
 
 class RoutePlan(BaseModel):
     action: Literal["execute", "clarify", "general_answer"]
-    tasks: list[QuestionTask] = Field(default_factory=list)
+    tasks: list[ChildTask] = Field(default_factory=list)
     reason: str
 
 
@@ -207,33 +185,6 @@ class ToolEvent(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
-class RunMetrics(BaseModel):
-    total_duration_ms: float = 0.0
-    classification_duration_ms: float = 0.0
-    retrieval_duration_ms: float = 0.0
-    generation_duration_ms: float = 0.0
-    model_calls: int = 0
-    tool_calls: int = 0
-    evidence_count: int = 0
-
-
-class RunError(BaseModel):
-    code: str
-    message: str
-    error_id: str | None = None
-
-
-class ConversationInput(BaseModel):
-    original_question: str
-    standalone_question: str
-    history_messages: list[Message] = Field(default_factory=list)
-    resolved_entities: list[EntityHint] = Field(default_factory=list)
-    resolution_traces: list[ResolutionTrace] = Field(default_factory=list)
-    ambiguous: bool = False
-    clarification_question: str | None = None
-    context_model_calls: int = 0
-
-
 class WorkflowResult(BaseModel):
     answer: str
     evidence: list[Evidence] = Field(default_factory=list)
@@ -241,19 +192,6 @@ class WorkflowResult(BaseModel):
     tool_events: list[ToolEvent] = Field(default_factory=list)
     model_calls: int = 0
     run_id: str | None = None
-
-
-class RunState(BaseModel):
-    conversation: ConversationInput
-    decomposition: QuestionDecomposition | None = None
-    route_plan: RoutePlan | None = None
-    research_plan: ResearchPlan | None = None
-    evidence: list[Evidence] = Field(default_factory=list)
-    tool_events: list[ToolEvent] = Field(default_factory=list)
-    answer: str = ""
-    citations: list[Citation] = Field(default_factory=list)
-    metrics: RunMetrics = Field(default_factory=RunMetrics)
-    errors: list[RunError] = Field(default_factory=list)
 
 
 class StreamEvent(BaseModel):

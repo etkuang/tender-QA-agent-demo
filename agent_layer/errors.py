@@ -20,11 +20,6 @@ class PlanningError(AgentError):
     user_message = "暂时无法生成可靠的研究计划，请稍后重试。"
 
 
-class ContextResolutionError(AgentError):
-    code = "internal_error"
-    user_message = "暂时无法解析当前问题所指的业务实体。"
-
-
 class PolicyQueryError(AgentError):
     code = "internal_error"
     user_message = "暂时无法解析政策查询条件。"

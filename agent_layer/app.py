@@ -1,30 +1,23 @@
 # coding: utf-8
 
 import asyncio
+import json
 import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from common.api_contracts.agent_api import Message
 from common.logger import get_logger
 from agent_layer.classification.chain import QuestionClassifier
 from agent_layer.checkpoint import LangGraphCheckpointRuntime
 from agent_layer.config import Settings
-from agent_layer.conversation.quick_responses import (
-    DEFAULT_EMPTY_RESPONSE,
-    DEFAULT_QUICK_RESPONSE,
-    QUICK_RESPONSE_KEYWORD_GROUPS,
-    QUICK_RESPONSES,
-)
-from agent_layer.context import ContextResolver
+from agent_layer.conversation.quick_responses import EMPTY_QUICK_RESPONSE, QUICK_RESPONSES
 from agent_layer.errors import AgentError, ClassificationError
 from agent_layer.schemas import (
     Category,
-    EntityHint,
+    ChildTask,
     Evidence,
-    Message,
-    QuestionDecomposition,
-    QuestionTask,
     RoutePlan,
     StreamEvent,
     StreamEventType,
@@ -41,7 +34,6 @@ logger = get_logger("agent.app")
 @dataclass(frozen=True)
 class ApplicationDependencies:
     settings: Settings
-    context_resolver: ContextResolver
     classifier: QuestionClassifier
     router: WorkflowRouter
     general_workflow: GeneralWorkflow
@@ -65,49 +57,37 @@ class TenderQAApplication:
     ) -> AsyncIterator[StreamEvent]:
         history = history_messages or []
         try:
-            yield StreamEvent(
-                type=StreamEventType.PROGRESS,
-                content="正在理解您的问题，并结合最近的对话确认查询对象。",
-            )
-            conversation = await self.dependencies.context_resolver.resolve(user_message, history)
-            quick = self._quick_response(conversation.standalone_question)
+            quick = self._quick_response(user_message)
             if quick:
                 yield StreamEvent(
                     type=StreamEventType.ROUTE,
                     content="已识别为会话控制消息。",
-                    data={"route": "greeting"},
+                    data={"route": quick["kind"]},
                 )
-                async for event in self._answer_events(quick):
-                    yield event
-                return
-
-            if conversation.ambiguous:
-                answer = conversation.clarification_question or "请明确当前问题所指的业务实体。"
-                yield StreamEvent(
-                    type=StreamEventType.ROUTE,
-                    content="会话指代存在歧义，需要确认实体。",
-                    data={"route": "clarify_entity"},
-                )
-                async for event in self._answer_events(answer):
+                async for event in self._answer_events(quick["content"]):
                     yield event
                 return
 
             yield StreamEvent(
                 type=StreamEventType.PROGRESS,
-                content="问题含义已经确认，正在拆解为可执行的子任务。",
+                content="正在结合完整对话理解您的问题并拆解查询任务。",
             )
+            history_text = self._history_text(history)
             classification_started = time.perf_counter()
-            decomposition = await self.dependencies.classifier.classify(
-                conversation.standalone_question,
-                self.dependencies.context_resolver.context_summary(conversation),
+            child_tasks = await self.dependencies.classifier.classify(
+                user_message.strip(),
+                history_text,
             )
             classification_duration_ms = (time.perf_counter() - classification_started) * 1000
-            route = self.dependencies.router.decide(decomposition)
+
+            route = self.dependencies.router.decide(child_tasks)
             yield StreamEvent(
                 type=StreamEventType.ROUTE,
                 content=f"问题已拆解为 {len(route.tasks)} 个子任务。",
                 data={
-                    "classification": decomposition.model_dump(mode="json"),
+                    "classification": {
+                        "tasks": [task.model_dump(mode="json") for task in child_tasks],
+                    },
                     "route": route.model_dump(mode="json"),
                     "duration_ms": classification_duration_ms,
                 },
@@ -117,12 +97,12 @@ class TenderQAApplication:
                 content=route.reason,
                 data={
                     "categories": [task.category.value for task in route.tasks],
-                    "requires_fresh_data": decomposition.requires_fresh_data,
+                    "requires_fresh_data": any(task.requires_fresh_data for task in route.tasks),
                 },
             )
 
             if route.action == "clarify":
-                answer = self.dependencies.router.clarification_message(decomposition)
+                answer = self.dependencies.router.clarification_message(child_tasks)
                 async for event in self._answer_events(answer):
                     yield event
                 return
@@ -133,8 +113,8 @@ class TenderQAApplication:
                     content="这是通用问题，不需要查询专业数据库，正在直接组织回答。",
                 )
                 answer = await self.dependencies.general_workflow.run(
-                    conversation.original_question,
-                    self.dependencies.context_resolver.context_summary(conversation),
+                    user_message,
+                    history_text,
                 )
                 async for event in self._answer_events(answer):
                     yield event
@@ -142,15 +122,15 @@ class TenderQAApplication:
 
             yield StreamEvent(
                 type=StreamEventType.PROGRESS,
-                content="正在按子任务执行对应工作流，并共享已确认的实体、结论和证据。",
+                content="正在按子任务执行对应工作流，并共享依赖任务的结论和证据。",
             )
             progress_queue = asyncio.Queue()
             progress_callback = progress_queue.put
             workflow_task = asyncio.create_task(
                 self._execute_route_plan(
                     route,
-                    decomposition,
-                    conversation,
+                    user_message,
+                    history_text,
                     progress_callback,
                 )
             )
@@ -219,8 +199,8 @@ class TenderQAApplication:
     async def _execute_route_plan(
             self,
             route: RoutePlan,
-            decomposition: QuestionDecomposition,
-            conversation,
+            original_question: str,
+            history: str,
             progress_callback,
     ) -> WorkflowResult:
         task_ids = {task.task_id for task in route.tasks}
@@ -230,7 +210,6 @@ class TenderQAApplication:
 
         pending = [task for task in route.tasks if task.category != Category.UNCLEAR]
         completed = set()
-        shared_entities = list(decomposition.entities)
         evidence = []
         tool_events = []
         child_answers = []
@@ -243,9 +222,8 @@ class TenderQAApplication:
                 *(
                     self._run_child_task(
                         task,
-                        decomposition,
-                        conversation,
-                        shared_entities,
+                        original_question,
+                        history,
                         child_answers,
                         progress_callback,
                     )
@@ -261,7 +239,6 @@ class TenderQAApplication:
                         "answer": result.answer,
                     }
                 )
-                shared_entities = self._merge_entities(shared_entities, task.entities)
                 evidence.extend(result.evidence)
                 tool_events.extend(result.tool_events)
                 model_calls += result.model_calls
@@ -270,7 +247,8 @@ class TenderQAApplication:
             pending = [task for task in pending if task.task_id not in ready_ids]
 
         synthesis = await self.dependencies.composite_workflow.run(
-            conversation.original_question,
+            original_question,
+            history,
             child_answers,
             evidence,
         )
@@ -285,37 +263,34 @@ class TenderQAApplication:
 
     async def _run_child_task(
             self,
-            task: QuestionTask,
-            decomposition: QuestionDecomposition,
-            conversation,
-            shared_entities: list[EntityHint],
+            task: ChildTask,
+            original_question: str,
+            history: str,
             child_answers: list[dict],
             progress_callback,
     ) -> WorkflowResult:
         task_question = self._task_question(task, child_answers)
         if task.category == Category.OTHER:
-            answer = await self.dependencies.general_workflow.run(
-                task_question,
-                self.dependencies.context_resolver.context_summary(conversation),
-            )
+            answer = await self.dependencies.general_workflow.run(task_question, history)
             return WorkflowResult(answer=answer, model_calls=1)
         if task.category == Category.POLICY:
             return await self.dependencies.policy_workflow.run(
-                conversation.original_question,
+                original_question,
                 task_question,
+                history,
                 progress_callback,
             )
         workflow = self.dependencies.data_workflows[task.category]
         return await workflow.run(
             task_question,
-            self._merge_entities(shared_entities, task.entities),
+            history,
             [],
-            task.requires_fresh_data or decomposition.requires_fresh_data,
+            task.requires_fresh_data,
             progress_callback,
         )
 
     @staticmethod
-    def _task_question(task: QuestionTask, child_answers: list[dict]) -> str:
+    def _task_question(task: ChildTask, child_answers: list[dict]) -> str:
         related = [item for item in child_answers if item["task_id"] in task.depends_on]
         if not related:
             return task.question
@@ -325,29 +300,24 @@ class TenderQAApplication:
         )
         return f"{task.question}\n\n已完成的相关子任务结论：\n{context_lines}"
 
-    @staticmethod
-    def _merge_entities(primary: list[EntityHint], secondary: list[EntityHint]) -> list[EntityHint]:
-        merged = list(primary)
-        known = {
-            (entity.normalized_name or entity.name, entity.entity_type)
-            for entity in merged
-        }
-        for entity in secondary:
-            key = (entity.normalized_name or entity.name, entity.entity_type)
-            if key not in known:
-                merged.append(entity)
-                known.add(key)
-        return merged
+    def _history_text(self, history_messages: list[Message]) -> str:
+        messages = history_messages[-self.dependencies.settings.recent_history_messages:]
+        return json.dumps(
+            [
+                {
+                    "role": message.role,
+                    "content": message.content[: self.dependencies.settings.context_message_chars],
+                }
+                for message in messages
+            ],
+            ensure_ascii=False,
+        )
 
-    def _quick_response(self, question: str) -> str | None:
-        normalized = re.sub(r"[^\u4e00-\u9fa5a-zA-Z0-9]", "", question.strip().lower())
+    def _quick_response(self, question: str) -> dict | None:
+        normalized = re.sub(r"[\W_]+", "", question.strip().lower(), flags=re.UNICODE)
         if not normalized:
-            return DEFAULT_EMPTY_RESPONSE
-        for keywords in QUICK_RESPONSE_KEYWORD_GROUPS:
-            for keyword in keywords:
-                if normalized == keyword or (len(normalized) <= 8 and keyword in normalized):
-                    return QUICK_RESPONSES.get(keyword, DEFAULT_QUICK_RESPONSE)
-        return None
+            return EMPTY_QUICK_RESPONSE
+        return QUICK_RESPONSES.get(normalized)
 
     @staticmethod
     def _category_label(category: Category) -> str:

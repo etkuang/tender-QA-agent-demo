@@ -47,17 +47,9 @@ RouteName = Literal["retrieve", "policy_internet", "assess", "synthesize"]
 class PolicyGraphState(TypedDict, total=False):
     run_id: str
     original_question: str
-    standalone_question: str
+    question: str
+    history: str
     policy_query: PolicyQuery
-    evidence: list[Evidence]
-    assessment: RetrievalAssessment
-    retrieval_queries: list[str]
-    seen_queries: list[str]
-    round_index: int
-    model_calls: int
-    tool_events: list[ToolEvent]
-    result: WorkflowResult
-    internet_evidence_count: int
 
 
 class PolicyGraphWorkflow:
@@ -116,7 +108,8 @@ class PolicyGraphWorkflow:
     async def run(
         self,
         original_question: str,
-        standalone_question: str,
+        question: str,
+        history: str,
         progress_callback: ProgressCallback | None = None,
     ) -> WorkflowResult:
         run_id = uuid.uuid4().hex
@@ -125,10 +118,11 @@ class PolicyGraphWorkflow:
         initial_state = PolicyGraphState(
             run_id=run_id,
             original_question=original_question,
-            standalone_question=standalone_question,
+            question=question,
+            history=history,
             evidence=[],
-            retrieval_queries=[standalone_question],
-            seen_queries=[standalone_question],
+            retrieval_queries=[question],
+            seen_queries=[question],
             round_index=0,
             model_calls=0,
             tool_events=[],
@@ -157,7 +151,7 @@ class PolicyGraphWorkflow:
             summary="Parsing policy query conditions.",
         )
         await self._emit(state["run_id"], start_event)
-        policy_query = await self.query_parser.parse(state["standalone_question"])
+        policy_query = await self.query_parser.parse(state["question"], state["history"])
         event = ToolEvent(
             stage="policy_parse",
             status="completed",
@@ -209,7 +203,7 @@ class PolicyGraphWorkflow:
         )
         await self._emit(state["run_id"], start_event)
         assessment = await self.assessment.assess(
-            state["standalone_question"],
+            state["question"],
             format_evidence(
                 evidence,
                 self.settings.evidence_chunk_chars,
@@ -255,7 +249,7 @@ class PolicyGraphWorkflow:
     async def _policy_internet(self, state: PolicyGraphState) -> dict:
         assessment = state["assessment"]
         internet_evidence, internet_events = await self._search_internet(
-            state["standalone_question"],
+            state["question"],
             assessment,
         )
         evidence = merge_evidence(state.get("evidence", []), internet_evidence)
@@ -314,7 +308,8 @@ class PolicyGraphWorkflow:
         await self._emit(state["run_id"], start_event)
         answer_input = {
             "original_question": state["original_question"],
-            "question": state["standalone_question"],
+            "question": state["question"],
+            "history": state["history"],
             "assessment": assessment.model_dump_json(),
             "evidence": evidence_text,
             "citation_feedback": "",
