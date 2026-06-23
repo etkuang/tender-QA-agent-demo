@@ -4,6 +4,7 @@ from agent_layer.adapters.base import WebsiteSearchClient
 from agent_layer.app import ApplicationDependencies, TenderQAApplication
 from agent_layer.classification.chain import QuestionClassifier
 from agent_layer.checkpoint import LangGraphCheckpointRuntime
+from agent_layer.conversation.quick_classifier import QuickResponseClassifier
 from agent_layer.config import Settings, settings
 from agent_layer.domains.company import build_company_profile
 from agent_layer.domains.price import build_price_profile
@@ -42,7 +43,8 @@ async def build_application(
     )
 
     classifier = QuestionClassifier(structured_model, runtime_settings)
-    router = WorkflowRouter(runtime_settings)
+    quick_classifier = QuickResponseClassifier(structured_model, runtime_settings)
+    router = WorkflowRouter()
     general_workflow = GeneralWorkflow(answer_model)
     composite_workflow = CompositeAnswerWorkflow(answer_model, runtime_settings)
     policy_assessment = PolicyAssessmentChain(structured_model, runtime_settings)
@@ -86,6 +88,7 @@ async def build_application(
 
     dependencies = ApplicationDependencies(
         settings=runtime_settings,
+        quick_classifier=quick_classifier,
         classifier=classifier,
         router=router,
         general_workflow=general_workflow,

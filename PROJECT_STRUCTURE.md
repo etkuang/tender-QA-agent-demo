@@ -64,12 +64,12 @@ Shared API contracts live in:
 
 ### 4.2 Question Understanding And Routing
 
-- `classification/prompts.py`: prompt for decomposition-first question understanding.
-- `classification/chain.py`: produces `QuestionDecomposition` structured output.
-- Conversation context, entities, and standalone question text are resolved by the classification prompt and chain.
-- `workflows/router.py`: converts `QuestionDecomposition` into `RoutePlan`.
+- `classification/prompts.py`: prompt for decomposition-first question understanding and anaphora resolution in each child task.
+- `classification/chain.py`: produces a JSON-array-shaped `ChildTaskList` structured output and returns `list[ChildTask]`.
+- Conversation context and references are resolved directly into self-contained child-task questions; classification no longer produces a separate standalone question or classification-level entities.
+- `workflows/router.py`: converts `list[ChildTask]` into `RoutePlan` and aggregates task-level clarification questions.
 
-Routing is no longer confidence-threshold based. It uses explicit child tasks and `Category.UNCLEAR` to decide whether to clarify, answer generally, or execute specialized workflows.
+Routing is no longer confidence-threshold based. It uses explicit child tasks, task-level freshness, dependencies, `Category.UNCLEAR`, and clarification questions to decide whether to clarify, answer generally, or execute specialized workflows.
 
 ### 4.3 Policy Workflow
 
@@ -118,7 +118,7 @@ Data-domain workflows cover:
 
 The shared workflow implementation is `workflows/data_domain.py`.
 
-It plans research tasks, executes SQL and website jobs, analyzes structured results, gathers evidence, and synthesizes a final answer. SQL and website capabilities are dependency-injected; missing adapters are reported as skipped rather than fabricated.
+It receives the resolved child-task question and the same bounded conversation context used by classification, plans research tasks, executes SQL and website jobs, analyzes structured results, gathers evidence, and synthesizes a final answer. SQL and website capabilities are dependency-injected; missing adapters are reported as skipped rather than fabricated.
 
 Data-domain workflows do not currently use checkpoint persistence. They can be migrated independently if resumable data-domain execution is required later.
 
@@ -149,7 +149,7 @@ For policy internet evidence, the workflow currently trusts `SourceTier.OFFICIAL
 
 ### 4.8 Schemas And Events
 
-- `schemas.py`: categories, entities, decomposition, route plans, policy queries, evidence, citations, research plans, tool events, workflow results, stream events, and metrics.
+- `schemas.py`: categories, child tasks, route plans, policy queries, evidence, citations, research plans, tool events, workflow results, and stream events.
 - Internal event types include route, progress, reasoning summary, source, assistant delta, and error.
 - `agent_layer/api.py` adapts internal stream events to the Backend transport chunks.
 

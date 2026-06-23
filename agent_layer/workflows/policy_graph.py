@@ -50,6 +50,15 @@ class PolicyGraphState(TypedDict, total=False):
     question: str
     history: str
     policy_query: PolicyQuery
+    evidence: list[Evidence]
+    assessment: RetrievalAssessment
+    retrieval_queries: list[str]
+    seen_queries: list[str]
+    round_index: int
+    model_calls: int
+    tool_events: list[ToolEvent]
+    result: WorkflowResult
+    internet_evidence_count: int
 
 
 class PolicyGraphWorkflow:

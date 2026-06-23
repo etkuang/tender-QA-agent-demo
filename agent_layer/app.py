@@ -2,15 +2,14 @@
 
 import asyncio
 import json
-import re
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 
 from common.api_contracts.agent_api import Message
 from common.logger import get_logger
 from agent_layer.classification.chain import QuestionClassifier
 from agent_layer.checkpoint import LangGraphCheckpointRuntime
+from agent_layer.conversation.quick_classifier import QuickResponseClassifier
 from agent_layer.config import Settings
 from agent_layer.conversation.quick_responses import EMPTY_QUICK_RESPONSE, QUICK_RESPONSES
 from agent_layer.errors import AgentError, ClassificationError
@@ -34,6 +33,7 @@ logger = get_logger("agent.app")
 @dataclass(frozen=True)
 class ApplicationDependencies:
     settings: Settings
+    quick_classifier: QuickResponseClassifier
     classifier: QuestionClassifier
     router: WorkflowRouter
     general_workflow: GeneralWorkflow
@@ -57,11 +57,17 @@ class TenderQAApplication:
     ) -> AsyncIterator[StreamEvent]:
         history = history_messages or []
         try:
-            quick = self._quick_response(user_message)
+            stripped_message = user_message.strip()
+            if stripped_message:
+                quick_decision = await self.dependencies.quick_classifier.classify(stripped_message)
+                quick = QUICK_RESPONSES.get(quick_decision.intent)
+            else:
+                quick = EMPTY_QUICK_RESPONSE
+
             if quick:
                 yield StreamEvent(
                     type=StreamEventType.ROUTE,
-                    content="已识别为会话控制消息。",
+                    content="已识别为快捷回复消息。",
                     data={"route": quick["kind"]},
                 )
                 async for event in self._answer_events(quick["content"]):
@@ -70,12 +76,12 @@ class TenderQAApplication:
 
             yield StreamEvent(
                 type=StreamEventType.PROGRESS,
-                content="正在结合完整对话理解您的问题并拆解查询任务。",
+                content="正在结合最近对话理解您的问题并拆解查询任务。",
             )
             history_text = self._history_text(history)
             classification_started = time.perf_counter()
             child_tasks = await self.dependencies.classifier.classify(
-                user_message.strip(),
+                stripped_message,
                 history_text,
             )
             classification_duration_ms = (time.perf_counter() - classification_started) * 1000
@@ -312,22 +318,3 @@ class TenderQAApplication:
             ],
             ensure_ascii=False,
         )
-
-    def _quick_response(self, question: str) -> dict | None:
-        normalized = re.sub(r"[\W_]+", "", question.strip().lower(), flags=re.UNICODE)
-        if not normalized:
-            return EMPTY_QUICK_RESPONSE
-        return QUICK_RESPONSES.get(normalized)
-
-    @staticmethod
-    def _category_label(category: Category) -> str:
-        return {
-            Category.POLICY: "政策信息",
-            Category.TENDER: "招标信息",
-            Category.PUBLIC_OPINION: "舆情信息",
-            Category.COMPANY: "企业信息",
-            Category.PRICE: "价格信息",
-            Category.PRODUCT: "商品信息",
-            Category.OTHER: "通用回答",
-            Category.UNCLEAR: "需要澄清",
-        }[category]

@@ -222,40 +222,71 @@ Proposed changes:
 Follow-up proposal update on 2026-06-22:
 
 Proposed changes:
-1. Replace the decomposition envelope with a direct child-task classification contract:
-   - Replace QuestionTask with ChildTask.
-   - Return a JSON array through a Pydantic root model.
-   - Keep task_id, question, category, depends_on, requires_fresh_data, and clarification_question.
+1. Harden the child-task schema contract:
+   - Add schema-level validation for clarification_question.
+   - Require unclear child tasks to provide clarification_question.
+   - Reject clarification_question on executable child tasks.
 
-2. Simplify question understanding while preserving anaphora resolution:
-   - Resolve references directly in each self-contained child question.
-   - Remove standalone_question, reasoning, global ambiguity and freshness fields, and classification-level entities.
-   - Represent ambiguity with category=unclear and a task-level clarification_question.
+2. Make classification and routing outputs non-empty by contract:
+   - Require ChildTaskList to contain at least one child task.
+   - Make RoutePlan.tasks required instead of defaulting to an empty list.
+   - Remove router fallback behavior for impossible empty classifications.
 
-3. Route directly from child tasks:
-   - Derive execute, general-answer, and clarification actions from the child-task list.
-   - Combine clarification questions emitted by unclear child tasks.
+3. Remove generic entity-recognition models from active contracts:
+   - Delete EntityHint.
+   - Remove entities from ResearchPlan.
+   - Remove entities from WebsiteQuery.
 
-4. Preserve dependent task execution:
-   - Keep depends_on scheduling and concurrent execution of ready tasks.
-   - Inject completed dependency answers into dependent child tasks.
+4. Update prompts to reflect the current bounded-history design:
+   - Replace complete-conversation wording with recent-conversation wording.
+   - Keep anaphora resolution inside child-task question generation.
+   - State that generic entity extraction is deferred until concrete SQL and website tool needs are known.
 
-5. Preserve bounded conversation context across workflows:
-   - Keep recent_history_messages and context_message_chars unchanged.
-   - Serialize roles and bounded message content without additional summarization or standalone rewriting.
-   - Pass the same context to classification, child planning, answer generation, and final synthesis.
+5. Simplify deterministic routing:
+   - Remove the router Settings dependency and constructor.
+   - Route to clarification when any child task carries clarification_question.
+   - Route all-OTHER child-task lists to general answer and the rest to workflow execution.
 
-6. Move entity extraction to domain-specific planning:
-   - Remove generic entities and confidence values from classification output.
-   - Let policy and data planners derive only the entities and attributes required by their tools.
+6. Simplify clarification aggregation:
+   - Return every task-level clarification question.
+   - Remove the arbitrary three-question limit.
+   - Remove the fallback clarification text that contradicts the validated schema.
 
-7. Tighten quick-response handling:
-   - Replace substring matching with exact normalized aliases.
-   - Return structured response kinds for empty input, greetings, thanks, and farewells.
-   - Handle quick responses before emitting decomposition progress.
+7. Align bootstrap and application cleanup with the router revision:
+   - Construct WorkflowRouter without runtime settings.
+   - Delete the unused TenderQAApplication._category_label helper.
 
-8. Align downstream contracts with the new classification result:
-   - Update data, policy, general, composite, application, policy-graph, and transport paths to consume resolved child tasks.
-   - Update route formatting and classification evaluation for the child-task list.
+8. Restore the full policy LangGraph state contract:
+   - Add evidence, assessment, retrieval query bookkeeping, round index, model-call count, tool events, result, and internet evidence count to PolicyGraphState.
+   - Prevent the truncated state type from dropping graph data required by retrieval, assessment, routing, checkpointing, and synthesis.
+
+9. Remove generic entities from data-domain website execution:
+   - Put needed subjects, keywords, time, region, fields, and metrics into existing ResearchPlan fields and task goals.
+   - Stop passing a removed entity list to website adapters.
+
+10. Correct progress and answer-generation prompt wording:
+   - Describe question understanding as using recent conversation rather than complete conversation.
+   - Label bounded history consistently in data-domain, policy, general, and composite prompts.
+   - Emphasize that history is context for understanding, not evidence or a reliable factual source.
 
 V0.58 release
+
+Follow-up proposal update on 2026-06-23:
+
+Proposed changes:
+1. Replace exact quick-response phrase matching with a model-classified intent contract:
+   - Add QuickResponseType and QuickResponseDecision to the Agent schema layer.
+   - Cover greeting, thanks, goodbye, capabilities, wellbeing, acknowledgement, compliment, apology, and none.
+   - Treat none as the route into the existing normal workflow.
+
+2. Add a dedicated quick-response classifier and canned response script:
+   - Create a pre-classifier that decides whether the latest message is pure social or conversational intent.
+   - Require business questions, follow-ups, corrections, and mixed social-plus-business messages to return none.
+   - Key all canned replies by classified quick-response intent instead of normalized raw text.
+
+3. Wire quick-response pre-classification into Agent orchestration:
+   - Keep empty input as a deterministic canned response.
+   - Run quick-response classification before normal question decomposition for non-empty input.
+   - Inject the quick-response classifier through bootstrap and ApplicationDependencies.
+
+V0.59 release

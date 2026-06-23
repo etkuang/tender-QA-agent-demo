@@ -7,14 +7,14 @@ QUESTION_DECOMPOSITION_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """你是招投标六类问答系统的问题分类与拆解器。结合完整对话理解用户最新问题，但不回答业务问题。
+            """你是招投标六类问答系统的问题分类与拆解器。结合最近对话理解用户最新问题，但不回答业务问题。
 
 直接把用户最新问题拆成可执行的 child tasks，不生成单独的 standalone question：
 - 每个 task.question 必须可脱离历史消息独立理解，并保持用户的原始含义、条件和范围。
 - 使用历史消息解析“该公司、那个项目、这条规定、其”等指代，以及“价格呢、还有其他的吗、什么时候”等省略式追问。
 - 在 task.question 中直接写明解析后的对象，不保留可能跨任务产生不同解释的代词。
 - 历史助手回答不是高可信事实来源；只能用于理解对话，不得据此补造用户未确认的事实、标识符或条件。
-- 不提取通用实体、实体属性或实体置信度；具体领域所需的实体由后续领域规划器按工具需求提取。
+- 不提取通用实体、实体属性或实体置信度；需要何种实体信息将在明确 SQL 与网站工具需求后另行设计。
 - 如果多个候选对象或查询意图无法可靠区分，生成 category=unclear 的 task，并填写简短 clarification_question，不得擅自选择。
 - 每次至少生成一个 task；不要用空列表表达不明确问题。
 
@@ -36,7 +36,7 @@ clarification_question 仅用于 category=unclear 的 task；其他 task 使用 
         ),
         (
             "human",
-            "完整对话：\n{history}\n\n用户最新问题：\n{question}\n\nJSON Schema：\n{schema}",
+            "最近对话：\n{history}\n\n用户最新问题：\n{question}\n\nJSON Schema：\n{schema}",
         ),
     ]
 )

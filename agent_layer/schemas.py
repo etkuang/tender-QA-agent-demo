@@ -2,9 +2,9 @@
 
 from datetime import date, datetime, timezone
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, RootModel, model_validator
 
 
 class Category(StrEnum):
@@ -40,11 +40,24 @@ class StreamEventType(StrEnum):
     ERROR = "error"
 
 
-class EntityHint(BaseModel):
-    name: str
-    entity_type: str
-    normalized_name: str | None = None
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+class QuickResponseType(StrEnum):
+    GREETING_ZH = "greeting_zh"
+    GREETING_EN = "greeting_en"
+    THANKS_ZH = "thanks_zh"
+    THANKS_EN = "thanks_en"
+    GOODBYE_ZH = "goodbye_zh"
+    GOODBYE_EN = "goodbye_en"
+    CAPABILITIES_ZH = "capabilities_zh"
+    CAPABILITIES_EN = "capabilities_en"
+    WELLBEING_ZH = "wellbeing_zh"
+    WELLBEING_EN = "wellbeing_en"
+    ACKNOWLEDGEMENT_ZH = "acknowledgement_zh"
+    ACKNOWLEDGEMENT_EN = "acknowledgement_en"
+    COMPLIMENT_ZH = "compliment_zh"
+    COMPLIMENT_EN = "compliment_en"
+    APOLOGY_ZH = "apology_zh"
+    APOLOGY_EN = "apology_en"
+    NONE = "none"
 
 
 class ChildTask(BaseModel):
@@ -53,17 +66,29 @@ class ChildTask(BaseModel):
     category: Category
     depends_on: list[str] = Field(default_factory=list)
     requires_fresh_data: bool = False
-    clarification_question: str | None = None
+    clarification_question: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_clarification(self) -> Self:
+        has_clarification = self.clarification_question is not None
+        if (self.category == Category.UNCLEAR) != has_clarification:
+            raise ValueError("Only unclear child tasks must provide clarification_question")
+        return self
 
 
 class ChildTaskList(RootModel[list[ChildTask]]):
-    pass
+    root: list[ChildTask] = Field(min_length=1)
 
 
 class RoutePlan(BaseModel):
     action: Literal["execute", "clarify", "general_answer"]
-    tasks: list[ChildTask] = Field(default_factory=list)
+    tasks: list[ChildTask]
     reason: str
+
+
+class QuickResponseDecision(BaseModel):
+    intent: QuickResponseType
+    reason: str = Field(min_length=1)
 
 
 class Evidence(BaseModel):
@@ -127,7 +152,6 @@ class ResearchTask(BaseModel):
 
 class ResearchPlan(BaseModel):
     subject: str
-    entities: list[EntityHint] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
     time_range: TimeRange | None = None
     region: str | None = None
@@ -160,7 +184,6 @@ class WebsiteQuery(BaseModel):
     query: str
     category: Category
     keywords: list[str] = Field(default_factory=list)
-    entities: list[EntityHint] = Field(default_factory=list)
     time_range: TimeRange | None = None
     region: str | None = None
 

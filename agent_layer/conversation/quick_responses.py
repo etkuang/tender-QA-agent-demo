@@ -1,48 +1,77 @@
 # coding: utf-8
 # @Author: Wang Qingkang
 
+from agent_layer.schemas import QuickResponseType
+
+
 EMPTY_QUICK_RESPONSE = {
     "kind": "empty",
     "content": "您好，请输入具体问题。",
 }
 
 QUICK_RESPONSES = {
-    "你好": {
-        "kind": "greeting",
-        "content": "您好！我是招投标六类智能问答助手，请问有什么可以帮您？",
+    QuickResponseType.GREETING_ZH: {
+        "kind": QuickResponseType.GREETING_ZH.value,
+        "content": "您好！我是招投标智能问答助手。我可以帮助您了解政策法规，并查询和分析招标项目、舆情动态、企业信息、价格数据和商品资料。请告诉我您想了解的问题。",
     },
-    "您好": {
-        "kind": "greeting",
-        "content": "您好！请问您想查询政策、招标、舆情、企业、价格还是商品信息？",
+    QuickResponseType.GREETING_EN: {
+        "kind": QuickResponseType.GREETING_EN.value,
+        "content": "Hello! I’m a tendering and procurement Q&A assistant. I can help with policies and regulations, tenders, public opinion, companies, prices, and products. What would you like to know?",
     },
-    "hi": {"kind": "greeting", "content": "Hello！请问有什么可以帮您？"},
-    "hello": {"kind": "greeting", "content": "Hello！请问有什么可以帮您？"},
-    "嗨": {"kind": "greeting", "content": "您好！请问有什么可以帮您？"},
-    "在吗": {"kind": "greeting", "content": "在的，请问有什么可以帮您？"},
-    "在不在": {"kind": "greeting", "content": "在的，请问有什么可以帮您？"},
-    "有人吗": {"kind": "greeting", "content": "在的，请问有什么可以帮您？"},
-    "谢谢": {"kind": "thanks", "content": "不客气，有问题随时问我。"},
-    "感谢": {"kind": "thanks", "content": "不客气。"},
-    "thanks": {
-        "kind": "thanks",
-        "content": "You're welcome. Feel free to ask me any question.",
+    QuickResponseType.THANKS_ZH: {
+        "kind": QuickResponseType.THANKS_ZH.value,
+        "content": "不客气。如有其他招投标相关问题，欢迎继续提问。",
     },
-    "thank": {
-        "kind": "thanks",
-        "content": "You're welcome. Feel free to ask me any question.",
+    QuickResponseType.THANKS_EN: {
+        "kind": QuickResponseType.THANKS_EN.value,
+        "content": "You’re welcome. Feel free to ask another tendering or procurement-related question.",
     },
-    "thankyou": {
-        "kind": "thanks",
-        "content": "You're welcome. Feel free to ask me any question.",
+    QuickResponseType.GOODBYE_ZH: {
+        "kind": QuickResponseType.GOODBYE_ZH.value,
+        "content": "再见！如有招投标相关问题，欢迎随时回来咨询。",
     },
-    "再见": {"kind": "goodbye", "content": "再见！如有问题，随时回来咨询。"},
-    "拜拜": {"kind": "goodbye", "content": "再见！如有问题，随时回来咨询。"},
-    "bye": {
-        "kind": "goodbye",
-        "content": "Goodbye! Feel free to come back if you have more questions.",
+    QuickResponseType.GOODBYE_EN: {
+        "kind": QuickResponseType.GOODBYE_EN.value,
+        "content": "Goodbye! You’re welcome to return whenever you have another tendering or procurement question.",
     },
-    "goodbye": {
-        "kind": "goodbye",
-        "content": "Goodbye! Feel free to come back if you have more questions.",
+    QuickResponseType.CAPABILITIES_ZH: {
+        "kind": QuickResponseType.CAPABILITIES_ZH.value,
+        "content": "我是招投标智能问答助手，可以协助您了解政策法规，并查询和分析招标项目、舆情动态、企业信息、价格数据和商品资料。您可以直接描述查询对象、地区、时间范围和关注的问题。",
+    },
+    QuickResponseType.CAPABILITIES_EN: {
+        "kind": QuickResponseType.CAPABILITIES_EN.value,
+        "content": "I’m a tendering and procurement Q&A assistant. I can help with policies, tenders, public opinion, companies, prices, and products. You can specify the subject, region, time range, and information you need.",
+    },
+    QuickResponseType.WELLBEING_ZH: {
+        "kind": QuickResponseType.WELLBEING_ZH.value,
+        "content": "谢谢关心，我运行正常，可以随时为您处理招投标相关问题。",
+    },
+    QuickResponseType.WELLBEING_EN: {
+        "kind": QuickResponseType.WELLBEING_EN.value,
+        "content": "Thank you for asking. I’m operating normally and ready to help with tendering and procurement questions.",
+    },
+    QuickResponseType.ACKNOWLEDGEMENT_ZH: {
+        "kind": QuickResponseType.ACKNOWLEDGEMENT_ZH.value,
+        "content": "好的。需要继续查询时，请直接告诉我具体问题。",
+    },
+    QuickResponseType.ACKNOWLEDGEMENT_EN: {
+        "kind": QuickResponseType.ACKNOWLEDGEMENT_EN.value,
+        "content": "Understood. When you are ready, tell me what you would like to investigate.",
+    },
+    QuickResponseType.COMPLIMENT_ZH: {
+        "kind": QuickResponseType.COMPLIMENT_ZH.value,
+        "content": "谢谢您的认可。我会继续尽力提供准确、清晰的回答。",
+    },
+    QuickResponseType.COMPLIMENT_EN: {
+        "kind": QuickResponseType.COMPLIMENT_EN.value,
+        "content": "Thank you. I’ll continue working to provide accurate and clear answers.",
+    },
+    QuickResponseType.APOLOGY_ZH: {
+        "kind": QuickResponseType.APOLOGY_ZH.value,
+        "content": "没关系。您可以继续说明问题或补充需要查询的信息。",
+    },
+    QuickResponseType.APOLOGY_EN: {
+        "kind": QuickResponseType.APOLOGY_EN.value,
+        "content": "No problem. You can continue explaining the question or provide additional details.",
     },
 }
