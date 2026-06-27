@@ -9,7 +9,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from common.logger import get_logger, get_request_id
 from agent_layer.config import Settings
-from agent_layer.errors import SQLValidationError
+from agent_layer.errors import SQLExecutionError, SQLValidationError
 from agent_layer.schemas import DataResult, ResearchTask
 from agent_layer.sql.schemas import SQLAuditEvent, SQLCandidate, ViewSchema
 from agent_layer.sql.validator import SqlglotValidator
@@ -161,7 +161,7 @@ class ReadOnlySQLGateway:
                         error_type=exc.__class__.__name__,
                     )
                 )
-                raise
+                raise SQLExecutionError from exc
             await self.audit_sink.record(
                 SQLAuditEvent(
                     task_id=task.task_id,

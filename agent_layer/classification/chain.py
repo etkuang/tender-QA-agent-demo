@@ -5,7 +5,7 @@ from langchain_core.language_models import BaseChatModel
 from common.logger import get_logger
 from agent_layer.classification.prompts import QUESTION_DECOMPOSITION_PROMPT
 from agent_layer.config import Settings
-from agent_layer.errors import ClassificationError, raise_model_error
+from agent_layer.errors import DecompositionError, raise_model_error
 from agent_layer.schemas import ChildTask, ChildTaskList
 
 logger = get_logger("agent.classification")
@@ -32,5 +32,5 @@ class QuestionClassifier:
             )
         except Exception as exc:
             logger.exception("structured question understanding failed")
-            raise_model_error(exc, ClassificationError)
+            raise_model_error(exc, DecompositionError)
         return result.root

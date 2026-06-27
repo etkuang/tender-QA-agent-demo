@@ -502,3 +502,78 @@ V0.60 release
    - Remove redundant StreamEvent.data payloads from route, progress, and source emissions after their useful meaning is reflected in content.
 
 V0.61 release
+
+Follow-up proposal update on 2026-06-28:
+
+Proposed changes:
+1. Keep route disclosure and execution reasoning as separate stream events:
+   - Keep ROUTE for the decomposed child-task graph and dependency/freshness information.
+   - Keep REASONING_SUMMARY for the execution strategy over that graph.
+   - Do not combine the two event types because they answer different user-facing questions.
+
+2. Move child-task graph validation and construction into TaskGraph:
+   - Make TaskGraph accept only the child task list.
+   - Build task_ids, task_map, dependencies, and frontier_task_ids inside __init__.
+   - Reject duplicate child task IDs and missing dependencies during graph construction.
+
+3. Keep TaskGraph lightweight:
+   - Remove the separate _tasks storage.
+   - Remove the public tasks property.
+   - Expose ordered task_ids plus copied task_map, dependencies, and frontier_task_ids accessors.
+
+4. Remove the old graph-building helper:
+   - Delete TenderQAApplication._build_task_graph.
+   - Construct TaskGraph(child_tasks) directly in the main stream flow after decomposition.
+
+5. Update task-graph consumers to use the new graph accessors:
+   - Update _task_graph_content and _execution_strategy_content to derive task objects from task_ids and task_map.
+   - Update _execute_child_tasks to initialize pending work and dependency checks from task_map and dependencies.
+   - Build final child_results in graph task-id order.
+
+6. Rename decomposition failures away from generic classification errors:
+   - Replace ClassificationError with DecompositionError for child-task decomposition failures.
+   - Raise DecompositionError for structured decomposition failures, duplicate task IDs, and invalid dependencies.
+   - Treat DecompositionError as a fatal Agent-level error because the system cannot safely determine the next workflow.
+
+7. Make quick-response classification recover locally:
+   - Remove QuickResponseError from the active error flow.
+   - Catch quick-response classifier exceptions inside QuickResponseClassifier.classify.
+   - Return QuickResponseType.NONE on quick-response failure so the Agent continues into the normal workflow.
+
+8. Clarify Agent error semantics:
+   - Keep decomposition and final answer-generation failures as real Agent-level failures.
+   - Treat optional quick-response failure as a non-fatal shortcut miss.
+   - Treat child workflow and data-source failures as child-task outcomes that final synthesis can explain.
+
+9. Convert child-task AgentError cases into unresolved workflow results:
+   - Catch child-level AgentError during child-task execution.
+   - Return WorkflowResult with status=UNSOLVED and unresolved_reason instead of aborting the whole request.
+   - Mark dependent child tasks blocked when prerequisite outcomes are not solved.
+
+10. Make data-domain no-evidence failures recoverable:
+   - When SQL or website execution produces source errors but no evidence, return an UNSOLVED WorkflowResult.
+   - Preserve the source error user_message as the unresolved_reason passed into final synthesis.
+   - Keep the generic source-unavailable fallback only when there is no specific collected source error.
+
+11. Add typed recoverable data-source errors:
+   - Add SQLExecutionError for SQL executor, service, or permission failures.
+   - Add WebsiteUnavailableError for website adapter or network-source failures.
+   - Update user-facing messages to state the failed subsystem without implying the entire Agent failed.
+
+12. Preserve SQL audit logging while typing SQL execution failures:
+   - Keep execution_failed SQLAuditEvent recording in ReadOnlySQLGateway.
+   - Raise SQLExecutionError after recording executor failures.
+   - Let DataDomainWorkflow convert SQLExecutionError into a recoverable child-task error result.
+
+13. Add LLM concurrency control for API and local model providers:
+   - Add llm_concurrency_limit to Agent Settings.
+   - Use one shared ModelConcurrencyGate inside ModelFactory for all structured and answer models.
+   - Default local Hugging Face runtime to one concurrent call because GPU memory scales with concurrent generations.
+   - Default OpenAI-compatible API mode to controlled parallelism while still allowing explicit override.
+
+14. Wrap chat models with the shared concurrency gate:
+   - Add ModelConcurrencyGate and ConcurrencyLimitedChatModel.
+   - Gate async normal generation and async structured-output calls.
+   - Prevent two concurrent Agent requests from invoking the same local model runtime at the same time by default.
+
+V0.62 release

@@ -18,6 +18,8 @@ from agent_layer.errors import (
     CitationValidationError,
     GenerationError,
     PlanningError,
+    SQLExecutionError,
+    WebsiteUnavailableError,
     raise_model_error,
 )
 from agent_layer.retrieval.adapter import EvidenceAdapter
@@ -303,7 +305,15 @@ class DataDomainWorkflow:
         evidence = rank_evidence(evidence)
         if not evidence:
             if errors:
-                raise errors[0]
+                reason = errors[0].user_message
+                return WorkflowResult(
+                    answer=reason,
+                    tool_events=events,
+                    model_calls=1,
+                    run_id=run_id,
+                    status=TaskStatus.UNSOLVED,
+                    unresolved_reason=reason,
+                )
             return WorkflowResult(
                 answer=SOURCE_UNAVAILABLE_RESPONSE,
                 tool_events=events,
@@ -468,9 +478,10 @@ class DataDomainWorkflow:
             return [], [event], [exc]
         except Exception:
             logger.warning("domain SQL gateway failed | task_id=%s", task.task_id, exc_info=True)
-            event = ToolEvent(stage="sql", status="failed", summary="结构化数据查询失败。")
+            error = SQLExecutionError()
+            event = ToolEvent(stage="sql", status="failed", summary=error.user_message)
             await self._report(event, progress_callback)
-            return [], [event], []
+            return [], [event], [error]
         analysis = self.analyzer.analyze(result, profile.analysis_template)
         evidence = self.adapter.from_data_result(
             result,
@@ -532,7 +543,8 @@ class DataDomainWorkflow:
             details={"evidence_count": len(evidence), "failed_adapter_count": failures},
         )
         await self._report(event, progress_callback)
-        return evidence, [event], []
+        errors = [WebsiteUnavailableError()] if status == "failed" else []
+        return evidence, [event], errors
 
     @staticmethod
     async def _report(event: ToolEvent, progress_callback: ProgressCallback | None) -> None:

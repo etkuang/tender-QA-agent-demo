@@ -6,8 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from common.logger import get_logger
 from agent_layer.config import Settings
-from agent_layer.errors import ClassificationError, raise_model_error
-from agent_layer.schemas import QuickResponseDecision
+from agent_layer.schemas import QuickResponseDecision, QuickResponseType
 
 logger = get_logger("agent.quick_response")
 
@@ -77,7 +76,7 @@ class QuickResponseClassifier:
                     "question": question,
                 }
             )
-        except Exception as exc:
-            logger.exception("quick response classification failed")
-            raise_model_error(exc, ClassificationError)
+        except Exception:
+            logger.exception("quick response classification failed; using normal workflow")
+            return QuickResponseDecision(quick_response_type=QuickResponseType.NONE)
         return result

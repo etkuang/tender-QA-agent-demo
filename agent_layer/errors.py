@@ -10,59 +10,64 @@ class AgentError(Exception):
     user_message = "系统已记录错误编号。"
 
 
-class ClassificationError(AgentError):
-    code = "classification_failed"
-    user_message = "暂时无法识别问题类型，请稍后重试。"
+class DecompositionError(AgentError):
+    code = "decomposition_failed"
+    user_message = "问题拆解失败，无法可靠确定后续处理步骤。"
 
 
 class PlanningError(AgentError):
-    code = "internal_error"
-    user_message = "暂时无法生成可靠的研究计划，请稍后重试。"
+    code = "planning_failed"
+    user_message = "数据查询计划生成失败。"
 
 
 class PolicyQueryError(AgentError):
-    code = "internal_error"
-    user_message = "暂时无法解析政策查询条件。"
+    code = "policy_query_failed"
+    user_message = "政策查询条件解析失败。"
 
 
 class PolicyAssessmentError(AgentError):
-    code = "internal_error"
-    user_message = "暂时无法判断政策证据是否充分。"
+    code = "policy_assessment_failed"
+    user_message = "政策证据充分性判断失败。"
 
 
 class GenerationError(AgentError):
-    code = "internal_error"
-    user_message = "暂时无法基于证据生成回答。"
+    code = "generation_failed"
+    user_message = "答案生成失败。"
 
 
 class CitationValidationError(AgentError):
-    code = "internal_error"
-    user_message = "证据引用校验未通过，系统未返回未经核验的结论。"
+    code = "citation_validation_failed"
+    user_message = "证据引用校验失败，系统未返回未经核验的结论。"
 
 
 class PolicyRetrievalError(AgentError):
     code = "policy_retrieval_failed"
-    user_message = "政策知识库暂时不可用。"
+    user_message = "政策知识库检索失败，请检查知识库服务连接。"
 
 
 class ModelTimeoutError(AgentError):
     code = "model_timeout"
-    user_message = "回答生成超时，请稍后重试。"
+    user_message = "模型调用超时。"
 
 
 class WebsiteUnavailableError(AgentError):
     code = "website_unavailable"
-    user_message = "部分实时来源暂时不可用，已基于可用资料回答。"
+    user_message = "网站数据源不可用，请检查网站适配器或网络连接。"
 
 
 class SQLValidationError(AgentError):
     code = "sql_validation_failed"
-    user_message = "当前统计请求无法安全执行。"
+    user_message = "结构化查询生成或校验失败。"
+
+
+class SQLExecutionError(AgentError):
+    code = "sql_execution_failed"
+    user_message = "结构化数据库查询失败，请检查 SQL 服务连接或执行权限。"
 
 
 class SQLTimeoutError(AgentError):
     code = "sql_timeout"
-    user_message = "统计查询超时，请缩小范围。"
+    user_message = "统计查询超时，请缩小查询范围。"
 
 
 def raise_model_error(error: Exception, error_type: type[AgentError]) -> None:

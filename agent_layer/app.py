@@ -12,7 +12,7 @@ from agent_layer.checkpoint import LangGraphCheckpointRuntime
 from agent_layer.conversation.quick_classifier import QuickResponseClassifier
 from agent_layer.config import Settings
 from agent_layer.conversation.quick_responses import EMPTY_QUICK_RESPONSE, QUICK_RESPONSES
-from agent_layer.errors import AgentError, ClassificationError
+from agent_layer.errors import AgentError, DecompositionError
 from agent_layer.schemas import (
     Category,
     ChildTask,
@@ -42,11 +42,44 @@ class ApplicationDependencies:
     checkpoint_runtime: LangGraphCheckpointRuntime
 
 
-@dataclass(frozen=True)
 class TaskGraph:
-    tasks: list[ChildTask]
-    task_map: dict[str, ChildTask]
-    dependencies: dict[str, list[str]]
+    def __init__(self, tasks: list[ChildTask]) -> None:
+        task_ids = [task.task_id for task in tasks]
+        task_map = {task.task_id: task for task in tasks}
+        dependencies = {task.task_id: task.depends_on.copy() for task in tasks}
+
+        if len(set(task_ids)) != len(task_ids):
+            raise DecompositionError("question decomposer returned duplicate child task ids")
+
+        if any(dependency not in task_ids for task in tasks for dependency in task.depends_on):
+            raise DecompositionError("question decomposer returned invalid child task dependencies")
+
+        self._task_map = task_map
+        self._dependencies = dependencies
+        self._frontier_task_ids = [
+            task_id
+            for task_id, task_dependencies in dependencies.items()
+            if not task_dependencies
+        ]
+
+    @property
+    def task_ids(self) -> list[str]:
+        return list(self._task_map)
+
+    @property
+    def task_map(self) -> dict[str, ChildTask]:
+        return self._task_map.copy()
+
+    @property
+    def dependencies(self) -> dict[str, list[str]]:
+        return {
+            task_id: task_dependencies.copy()
+            for task_id, task_dependencies in self._dependencies.items()
+        }
+
+    @property
+    def frontier_task_ids(self) -> list[str]:
+        return self._frontier_task_ids.copy()
 
 
 class TenderQAApplication:
@@ -93,7 +126,7 @@ class TenderQAApplication:
             )
 
             # ----- Step 3: build task graph -----
-            task_graph = self._build_task_graph(child_tasks)
+            task_graph = TaskGraph(child_tasks)
 
             yield StreamEvent(
                 type=StreamEventType.ROUTE,
@@ -173,9 +206,13 @@ class TenderQAApplication:
             Category.OTHER: "通用问题",
             Category.UNCLEAR: "需要澄清",
         }
+        task_ids = task_graph.task_ids
+        task_map = task_graph.task_map
+        dependencies_by_task = task_graph.dependencies
         task_descriptions = []
-        for task in task_graph.tasks:
-            dependencies = task_graph.dependencies[task.task_id]
+        for task_id in task_ids:
+            task = task_map[task_id]
+            dependencies = dependencies_by_task[task_id]
             dependency_text = ""
             if dependencies:
                 dependency_text = f"，依赖 {', '.join(dependencies)}"
@@ -185,7 +222,7 @@ class TenderQAApplication:
             task_descriptions.append(
                 f"{task.task_id}：{task.question}（{category_labels[task.category]}{dependency_text}{freshness_text}）"
             )
-        return f"已将问题拆成 {len(task_graph.tasks)} 个子任务，并建立依赖处理图：{'；'.join(task_descriptions)}。"
+        return f"已将问题拆成 {len(task_ids)} 个子任务，并建立依赖处理图：{'；'.join(task_descriptions)}。"
 
     @staticmethod
     def _execution_strategy_content(task_graph: TaskGraph) -> str:
@@ -199,9 +236,11 @@ class TenderQAApplication:
             Category.OTHER: "通用问题",
             Category.UNCLEAR: "需要澄清",
         }
-        categories = "、".join(dict.fromkeys(category_labels[task.category] for task in task_graph.tasks))
+        task_map = task_graph.task_map
+        tasks = [task_map[task_id] for task_id in task_graph.task_ids]
+        categories = "、".join(dict.fromkeys(category_labels[task.category] for task in tasks))
         freshness = "其中有子任务需要较新或实时数据。" if any(
-            task.requires_fresh_data for task in task_graph.tasks
+            task.requires_fresh_data for task in tasks
         ) else "这些子任务未表达实时数据需求。"
         return (
             f"本轮包含{categories}类型的子任务，{freshness}"
@@ -315,15 +354,6 @@ class TenderQAApplication:
                 content=answer[index : index + size],
             )
 
-    @staticmethod
-    def _build_task_graph(tasks: list[ChildTask]) -> TaskGraph:
-        task_ids = [task.task_id for task in tasks]
-        if len(task_ids) != len(set(task_ids)):
-            raise ClassificationError("question decomposer returned duplicate child task ids")
-        task_map = {task.task_id: task for task in tasks}
-        dependencies = {task.task_id: task.depends_on for task in tasks}
-        return TaskGraph(tasks=tasks, task_map=task_map, dependencies=dependencies)
-
     async def _execute_child_tasks(
             self,
             task_graph: TaskGraph,
@@ -331,8 +361,9 @@ class TenderQAApplication:
             history: str,
             progress_callback,
     ) -> WorkflowResult:
-        tasks = task_graph.tasks
-        pending = dict(task_graph.task_map)
+        task_ids = task_graph.task_ids
+        pending = task_graph.task_map
+        dependencies_by_task = task_graph.dependencies
         outcomes = {}
         evidence = []
         tool_events = []
@@ -342,20 +373,7 @@ class TenderQAApplication:
             ready = []
             blocked_now = []
             for task in list(pending.values()):
-                dependencies = task_graph.dependencies[task.task_id]
-                missing_dependencies = [
-                    dependency
-                    for dependency in dependencies
-                    if dependency not in pending and dependency not in outcomes
-                ]
-                if missing_dependencies:
-                    blocked_now.append(
-                        (
-                            task,
-                            f"依赖的子任务不存在：{', '.join(missing_dependencies)}。",
-                        )
-                    )
-                    continue
+                dependencies = dependencies_by_task[task.task_id]
 
                 dependency_outcomes = [
                     outcomes[dependency]
@@ -412,9 +430,9 @@ class TenderQAApplication:
                 pending.pop(task.task_id)
 
         child_results = [
-            outcomes[task.task_id].model_dump(mode="json")
-            for task in tasks
-            if task.task_id in outcomes
+            outcomes[task_id].model_dump(mode="json")
+            for task_id in task_ids
+            if task_id in outcomes
         ]
         synthesis = await self.dependencies.composite_workflow.run(
             original_question,

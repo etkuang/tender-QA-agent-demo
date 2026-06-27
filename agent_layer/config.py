@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     llm_model: str = "qwen3-32b"
     llm_max_tokens: int = 1600  # Set the max output tokens per LLM response.
     llm_timeout_seconds: float = 60.0
+    llm_concurrency_limit: int | None = None
     structured_output_retries: int = 1
     llm_local_device_map: str = "auto"
     llm_local_torch_dtype: str = "auto"
