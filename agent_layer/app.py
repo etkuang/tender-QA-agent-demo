@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -21,6 +20,7 @@ from agent_layer.schemas import (
     StreamEvent,
     StreamEventType,
     TaskStatus,
+    ToolEvent,
     WorkflowResult,
 )
 from agent_layer.workflows.data_domain import DataDomainWorkflow
@@ -42,6 +42,13 @@ class ApplicationDependencies:
     checkpoint_runtime: LangGraphCheckpointRuntime
 
 
+@dataclass(frozen=True)
+class TaskGraph:
+    tasks: list[ChildTask]
+    task_map: dict[str, ChildTask]
+    dependencies: dict[str, list[str]]
+
+
 class TenderQAApplication:
     def __init__(self, dependencies: ApplicationDependencies):
         self.dependencies = dependencies
@@ -55,10 +62,11 @@ class TenderQAApplication:
         history_messages: list[Message] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         history = history_messages or []
+        user_message = user_message.strip()
         try:
-            stripped_message = user_message.strip()
-            if stripped_message:
-                quick_decision = await self.dependencies.quick_classifier.classify(stripped_message)
+            # ----- Step 1: quick response -----
+            if user_message:
+                quick_decision = await self.dependencies.quick_classifier.classify(user_message)
                 quick = QUICK_RESPONSES.get(quick_decision.quick_response_type)
             else:
                 quick = EMPTY_QUICK_RESPONSE
@@ -66,59 +74,54 @@ class TenderQAApplication:
             if quick:
                 yield StreamEvent(
                     type=StreamEventType.ROUTE,
-                    content="已识别为快捷回复消息。",
-                    data={"route": quick["kind"]},
+                    content=quick["route_content"],
                 )
                 async for event in self._answer_events(quick["content"]):
                     yield event
                 return
 
+            # ----- Step 2: decompose user request -----
             yield StreamEvent(
                 type=StreamEventType.PROGRESS,
-                content="正在结合最近对话理解您的问题并拆解查询任务。",
+                content="我正在参考最近对话，识别可以单独处理的子问题。",
             )
+
             history_text = self._history_text(history)
-            classification_started = time.perf_counter()
             child_tasks = await self.dependencies.classifier.classify(
-                stripped_message,
+                user_message,
                 history_text,
             )
-            classification_duration_ms = (time.perf_counter() - classification_started) * 1000
+
+            # ----- Step 3: build task graph -----
+            task_graph = self._build_task_graph(child_tasks)
 
             yield StreamEvent(
                 type=StreamEventType.ROUTE,
-                content=f"问题已拆解为 {len(child_tasks)} 个子任务。",
-                data={
-                    "classification": {
-                        "tasks": [task.model_dump(mode="json") for task in child_tasks],
-                    },
-                    "duration_ms": classification_duration_ms,
-                },
-            )
-            yield StreamEvent(
-                type=StreamEventType.REASONING_SUMMARY,
-                content="问题已拆成子任务；我会按依赖关系执行可处理任务，并说明无法解决或被依赖阻塞的任务。",
-                data={
-                    "categories": [task.category.value for task in child_tasks],
-                    "requires_fresh_data": any(task.requires_fresh_data for task in child_tasks),
-                },
+                content=self._task_graph_content(task_graph),
             )
 
             yield StreamEvent(
+                type=StreamEventType.REASONING_SUMMARY,
+                content=self._execution_strategy_content(task_graph),
+            )
+
+            # ----- Step 4: execute child-task graph -----
+            yield StreamEvent(
                 type=StreamEventType.PROGRESS,
-                content="正在按子任务依赖关系执行可处理任务。",
+                content="我正在按依赖关系执行可处理的子任务。",
             )
             progress_queue = asyncio.Queue()
             progress_callback = progress_queue.put
             workflow_task = asyncio.create_task(
                 self._execute_child_tasks(
-                    child_tasks,
+                    task_graph,
                     user_message,
                     history_text,
                     progress_callback,
                 )
             )
             try:
+                # ----- Step 5: relay workflow progress -----
                 while not workflow_task.done() or not progress_queue.empty():
                     try:
                         tool_event = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
@@ -126,8 +129,7 @@ class TenderQAApplication:
                         continue
                     yield StreamEvent(
                         type=StreamEventType.PROGRESS,
-                        content=tool_event.summary,
-                        data=tool_event.model_dump(mode="json"),
+                        content=self._progress_content(tool_event),
                     )
                 result = await workflow_task
             finally:
@@ -135,27 +137,14 @@ class TenderQAApplication:
                     workflow_task.cancel()
                     await asyncio.gather(workflow_task, return_exceptions=True)
             for item in result.evidence:
+                # ----- Step 6: stream sources and final answer -----
                 yield StreamEvent(
                     type=StreamEventType.SOURCE,
-                    content=item.title,
-                    data={
-                        "evidence_id": item.evidence_id,
-                        "domain": item.domain.value,
-                        "source_type": item.source_type.value,
-                        "title": item.title,
-                        "url": item.url,
-                        "document_id": item.document_id,
-                        "law_name": item.law_name,
-                        "article_id": item.article_id,
-                        "published_at": item.published_at.isoformat() if item.published_at else None,
-                        "score": item.score,
-                        "authority_level": item.authority_level,
-                        "freshness_level": item.freshness_level,
-                    },
+                    content=self._source_content(item),
                 )
             yield StreamEvent(
                 type=StreamEventType.PROGRESS,
-                content=f"已核验 {len(result.evidence)} 条资料并完成引用检查，正在整理最终回答。",
+                content=f"子任务处理完成，已整理 {len(result.evidence)} 条可引用资料，下面返回最终回答。",
             )
             async for event in self._answer_events(result.answer):
                 yield event
@@ -169,8 +158,154 @@ class TenderQAApplication:
             logger.exception("unexpected agent failure")
             yield StreamEvent(
                 type=StreamEventType.ERROR,
-                content="系统已记录错误编号。",
+                content="处理过程中出现未预期错误，请稍后重试。",
             )
+
+    @staticmethod
+    def _task_graph_content(task_graph: TaskGraph) -> str:
+        category_labels = {
+            Category.POLICY: "政策法规",
+            Category.TENDER: "招标项目",
+            Category.PUBLIC_OPINION: "舆情信息",
+            Category.COMPANY: "企业信息",
+            Category.PRICE: "价格信息",
+            Category.PRODUCT: "商品信息",
+            Category.OTHER: "通用问题",
+            Category.UNCLEAR: "需要澄清",
+        }
+        task_descriptions = []
+        for task in task_graph.tasks:
+            dependencies = task_graph.dependencies[task.task_id]
+            dependency_text = ""
+            if dependencies:
+                dependency_text = f"，依赖 {', '.join(dependencies)}"
+            freshness_text = ""
+            if task.requires_fresh_data:
+                freshness_text = "，需要较新或实时数据"
+            task_descriptions.append(
+                f"{task.task_id}：{task.question}（{category_labels[task.category]}{dependency_text}{freshness_text}）"
+            )
+        return f"已将问题拆成 {len(task_graph.tasks)} 个子任务，并建立依赖处理图：{'；'.join(task_descriptions)}。"
+
+    @staticmethod
+    def _execution_strategy_content(task_graph: TaskGraph) -> str:
+        category_labels = {
+            Category.POLICY: "政策法规",
+            Category.TENDER: "招标项目",
+            Category.PUBLIC_OPINION: "舆情信息",
+            Category.COMPANY: "企业信息",
+            Category.PRICE: "价格信息",
+            Category.PRODUCT: "商品信息",
+            Category.OTHER: "通用问题",
+            Category.UNCLEAR: "需要澄清",
+        }
+        categories = "、".join(dict.fromkeys(category_labels[task.category] for task in task_graph.tasks))
+        freshness = "其中有子任务需要较新或实时数据。" if any(
+            task.requires_fresh_data for task in task_graph.tasks
+        ) else "这些子任务未表达实时数据需求。"
+        return (
+            f"本轮包含{categories}类型的子任务，{freshness}"
+            "我会先处理没有前置依赖的子任务；如果某个子任务无法解决，"
+            "它的后续依赖任务会标记为无法继续，并在最终回答中说明。"
+        )
+
+    @staticmethod
+    def _source_content(item) -> str:
+        category_labels = {
+            "policy": "政策法规",
+            "tender": "招标项目",
+            "public_opinion": "舆情信息",
+            "company": "企业信息",
+            "price": "价格信息",
+            "product": "商品信息",
+            "other": "通用问题",
+            "unclear": "需要澄清",
+        }
+        source_type_labels = {
+            "local_document": "本地资料库",
+            "sql": "结构化数据库",
+            "website": "外部网站",
+        }
+        domain = category_labels[item.domain.value]
+        source_type = source_type_labels[item.source_type.value]
+        legal_position = ""
+        if item.law_name:
+            legal_position = f"，对应《{item.law_name}》"
+        if item.article_id:
+            legal_position += f"第 {item.article_id} 条"
+        published_at = ""
+        if item.published_at:
+            published_at = f"，发布日期：{item.published_at.date().isoformat()}"
+        location = ""
+        if item.url:
+            location = f"，来源链接：{item.url}"
+        elif item.document_id:
+            location = f"，文档编号：{item.document_id}"
+        return f"已将{domain}领域的{source_type}资料“{item.title}”{legal_position}{published_at}{location}作为本次回答依据。"
+
+    @staticmethod
+    def _progress_content(event: ToolEvent) -> str:
+        details = event.details
+        if event.stage == "policy_parse":
+            if event.status == "started":
+                return "正在提取政策检索条件。"
+            if event.status == "completed":
+                return "已提取政策检索条件。"
+        if event.stage == "policy_retrieve":
+            if event.status == "started":
+                round_index = details.get("round")
+                if round_index:
+                    return f"正在进行第 {round_index} 轮政策资料检索。"
+                return "正在检索政策资料。"
+            if event.status == "completed":
+                return f"本轮政策知识库检索返回 {details.get('evidence_count', 0)} 条候选资料。"
+        if event.stage == "policy_assessment":
+            if event.status == "started":
+                return "正在判断当前政策资料是否足以回答。"
+            if event.status == "completed":
+                return "已完成政策资料充分性判断。"
+        if event.stage == "policy_internet":
+            if event.status == "skipped":
+                return "未配置官方政策网页检索，本轮不查询外部网页。"
+            if event.status == "failed":
+                return "官方政策网页检索暂时不可用，本轮只使用已取得资料。"
+            if event.status == "completed":
+                return f"官方政策网页检索返回 {details.get('evidence_count', 0)} 条可用资料。"
+        if event.stage == "policy_synthesis":
+            if event.status == "started":
+                return "正在根据已选政策资料生成政策子任务回答。"
+            if event.status == "completed":
+                return "已完成政策子任务回答。"
+        if event.stage == "research_plan":
+            if event.status == "started":
+                return "正在为当前子任务生成数据查询计划。"
+            if event.status == "completed":
+                return f"已生成 {len(details.get('tasks', []))} 个数据查询步骤。"
+        if event.stage == "sql":
+            if event.status == "skipped":
+                return "结构化数据库未配置，本次无法执行 SQL 查询。"
+            if event.status == "started":
+                return "正在执行只读结构化查询。"
+            if event.status == "failed":
+                return event.summary
+            if event.status == "completed":
+                return f"只读结构化查询完成，返回 {details.get('row_count', 0)} 行。"
+        if event.stage == "website":
+            if event.status == "skipped":
+                return "未配置该领域的网站数据源，本次跳过网站检索。"
+            if event.status == "started":
+                return "正在检索已配置的网站数据源。"
+            if event.status in {"completed", "failed"}:
+                return (
+                    f"网站检索返回 {details.get('evidence_count', 0)} 条可用资料，"
+                    f"{details.get('failed_adapter_count', 0)} 个适配器失败。"
+                )
+        if event.stage == "domain_synthesis":
+            if event.status == "started":
+                return "已汇总可用数据，正在核对统计口径、缺失项和引用。"
+            if event.status == "completed":
+                return "已完成当前数据子任务回答。"
+        return event.summary
 
     async def _answer_events(self, answer: str) -> AsyncIterator[StreamEvent]:
         size = self.dependencies.settings.stream_chunk_size
@@ -180,14 +315,24 @@ class TenderQAApplication:
                 content=answer[index : index + size],
             )
 
+    @staticmethod
+    def _build_task_graph(tasks: list[ChildTask]) -> TaskGraph:
+        task_ids = [task.task_id for task in tasks]
+        if len(task_ids) != len(set(task_ids)):
+            raise ClassificationError("question decomposer returned duplicate child task ids")
+        task_map = {task.task_id: task for task in tasks}
+        dependencies = {task.task_id: task.depends_on for task in tasks}
+        return TaskGraph(tasks=tasks, task_map=task_map, dependencies=dependencies)
+
     async def _execute_child_tasks(
             self,
-            tasks: list[ChildTask],
+            task_graph: TaskGraph,
             original_question: str,
             history: str,
             progress_callback,
     ) -> WorkflowResult:
-        pending = {task.task_id: task for task in tasks}
+        tasks = task_graph.tasks
+        pending = dict(task_graph.task_map)
         outcomes = {}
         evidence = []
         tool_events = []
@@ -197,9 +342,10 @@ class TenderQAApplication:
             ready = []
             blocked_now = []
             for task in list(pending.values()):
+                dependencies = task_graph.dependencies[task.task_id]
                 missing_dependencies = [
                     dependency
-                    for dependency in task.depends_on
+                    for dependency in dependencies
                     if dependency not in pending and dependency not in outcomes
                 ]
                 if missing_dependencies:
@@ -213,10 +359,10 @@ class TenderQAApplication:
 
                 dependency_outcomes = [
                     outcomes[dependency]
-                    for dependency in task.depends_on
+                    for dependency in dependencies
                     if dependency in outcomes
                 ]
-                if len(dependency_outcomes) != len(task.depends_on):
+                if len(dependency_outcomes) != len(dependencies):
                     continue
 
                 unsolved_dependencies = [

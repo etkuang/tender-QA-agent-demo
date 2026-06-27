@@ -413,7 +413,7 @@ class DataDomainWorkflow:
             ToolEvent(
                 stage=task.task_id,
                 status="started",
-                summary=f"正在处理查询任务：{task.goal}",
+                summary=f"正在执行数据查询步骤：{task.goal}",
                 details={"domain": category.value, "source": task.preferred_source},
             ),
             progress_callback,
@@ -424,7 +424,7 @@ class DataDomainWorkflow:
         if task.preferred_source in {"website", "both"}:
             jobs.append(self._execute_web(task, plan, profile, progress_callback))
         if not jobs:
-            event = ToolEvent(stage=task.task_id, status="skipped", summary="该查询任务没有可用的数据来源。")
+            event = ToolEvent(stage=task.task_id, status="skipped", summary="该数据查询步骤没有可用的数据来源。")
             await self._report(event, progress_callback)
             return [], [event], []
         results = await asyncio.gather(*jobs)
@@ -439,7 +439,7 @@ class DataDomainWorkflow:
             ToolEvent(
                 stage=task.task_id,
                 status="completed",
-                summary=f"查询任务已完成：{task.goal}，获得 {len(evidence)} 条可用资料。",
+                summary=f"数据查询步骤已完成：{task.goal}，获得 {len(evidence)} 条可引用资料。",
             ),
             progress_callback,
         )
@@ -527,8 +527,9 @@ class DataDomainWorkflow:
         event = ToolEvent(
             stage="website",
             status=status,
-            summary=f"网站检索确认 {len(evidence)} 条证据，失败适配器 {failures} 个。",
+            summary=f"网站检索返回 {len(evidence)} 条可用资料，{failures} 个适配器失败。",
             duration_ms=(time.perf_counter() - started) * 1000,
+            details={"evidence_count": len(evidence), "failed_adapter_count": failures},
         )
         await self._report(event, progress_callback)
         return evidence, [event], []

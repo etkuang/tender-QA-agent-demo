@@ -424,3 +424,81 @@ Proposed changes:
    - Remove router imports from Agent application wiring.
 
 V0.60 release
+
+23. Add readable step comments to TenderQAApplication.stream:
+   - Mark quick response, request decomposition, task-plan emission, child-task graph execution, progress relay, and final answer streaming.
+   - Keep quick-response detection and direct reply as one logical step.
+
+24. Improve top-level StreamEvent wording:
+   - Make quick-response, decomposition, task-plan, graph-execution, final-answer, and generic-error messages reflect the real runtime action.
+   - Use direct user-facing Chinese instead of internal process labels.
+
+25. Centralize user-facing progress text:
+   - Add a progress-content formatter based on ToolEvent stage and status.
+   - Avoid exposing raw internal summaries or English workflow labels directly to users.
+
+26. Make policy progress messages action-accurate:
+   - Describe policy condition parsing, retrieval rounds, evidence sufficiency checks, official-web fallback, and policy answer synthesis.
+   - Report policy retrieval and official-web evidence counts through structured event details.
+
+27. Make data-domain progress messages action-accurate:
+   - Describe research planning, SQL execution, website retrieval, data synthesis, skipped sources, and failed sources in user-facing wording.
+   - Report website evidence counts and adapter failure counts through structured event details.
+
+28. Improve route-event transport formatting:
+   - Present child tasks as task id, question, and category.
+   - State whether any child task needs newer or real-time data without using internal classification wording.
+
+29. Improve progress-event transport formatting:
+   - Clarify policy evidence sufficiency results.
+   - Describe research-plan goals without claiming tasks will run sequentially when they may run concurrently.
+
+30. Improve source-event transport formatting:
+   - Say that a source has been added as answer evidence.
+   - Avoid wording that implies the source is still being confirmed after evidence processing is already complete.
+
+31. Remove semantic reasoning formatters from the API layer:
+   - Delete _format_route, _format_progress, and _format_source.
+   - Remove category and source label maps that only supported those formatters.
+
+32. Make StreamEvent.content authoritative for reasoning output:
+   - Combine route, reasoning-summary, progress, and source events into one reasoning branch.
+   - Transport the event content directly with only a simple bullet wrapper.
+
+33. Move source wording to the application layer:
+   - Add TenderQAApplication._source_content.
+   - Emit user-facing source text before the API transport boundary.
+
+34. Add an explicit child-task graph model:
+   - Add TaskGraph with ordered tasks, task lookup, and dependency edges.
+   - Keep graph construction separate from graph execution.
+
+35. Build the task graph as Step 3 in the main stream flow:
+   - Parse classifier output into TaskGraph after decomposition.
+   - Emit task-plan events from the graph rather than raw child-task output.
+
+36. Execute the explicit task graph:
+   - Pass TaskGraph into _execute_child_tasks.
+   - Initialize pending execution state from the graph task map.
+
+37. Use graph dependency edges during scheduling:
+   - Check missing dependencies through TaskGraph.dependencies.
+   - Decide task readiness from graph edges instead of rereading raw task fields.
+
+38. Add explicit quick-response route wording:
+   - Add route_content to each canned quick response.
+   - Use route_content for route events instead of exposing the internal quick-response kind.
+
+39. Move task-graph details into route content:
+   - Include child task ids, questions, categories, dependencies, and freshness needs in user-facing route text.
+   - Keep StreamEvent.content as the reasoning text consumed by the API layer.
+
+40. Move execution-strategy details into reasoning content:
+   - Include task categories and freshness summary in the reasoning-summary event.
+   - Preserve the dependency-graph execution explanation in user-facing wording.
+
+41. Move source metadata into source content:
+   - Include source domain, source type, title, legal position, publish date, and source location in source reasoning text.
+   - Remove redundant StreamEvent.data payloads from route, progress, and source emissions after their useful meaning is reflected in content.
+
+V0.61 release

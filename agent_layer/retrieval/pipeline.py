@@ -67,6 +67,7 @@ class RetrievalPipeline:
                 duration_ms=(time.perf_counter() - started) * 1000,
                 details={
                     "query": question,
+                    "evidence_count": len(evidence),
                     "article_exact": article_num not in (None, ""),
                     "law_name": law_name,
                     "as_of_date": parsed_query.as_of_date.isoformat() if parsed_query.as_of_date else None,

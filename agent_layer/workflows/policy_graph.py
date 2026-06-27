@@ -401,7 +401,7 @@ class PolicyGraphWorkflow:
             status="completed",
             summary=f"Official policy internet search returned {len(evidence)} evidence items.",
             duration_ms=(time.perf_counter() - started) * 1000,
-            details={"query": website_query.query},
+            details={"query": website_query.query, "evidence_count": len(evidence)},
         )
         return evidence, [event]
 

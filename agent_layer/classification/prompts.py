@@ -20,7 +20,7 @@ QUESTION_DECOMPOSITION_PROMPT = ChatPromptTemplate.from_messages(
     "depends_on": [],
     "requires_fresh_data": false,
     "clarification_question": null
-  }
+  },
 ]
 
 child task 是一个可执行的子问题，用于决定后续调用哪个工作流处理。

@@ -26,23 +26,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-CATEGORY_LABELS = {
-    "policy": "政策法规",
-    "tender": "招标项目",
-    "public_opinion": "舆情信息",
-    "company": "企业信息",
-    "price": "价格信息",
-    "product": "商品信息",
-    "other": "通用问题",
-    "unclear": "需要澄清",
-}
-
-SOURCE_TYPE_LABELS = {
-    "local_document": "本地资料库",
-    "sql": "结构化数据库",
-    "website": "外部网站",
-}
-
 
 def to_transport_chunks(event: StreamEvent) -> list[AgentTransportChunk]:
     size = settings.stream_chunk_size
@@ -62,57 +45,14 @@ def to_transport_chunks(event: StreamEvent) -> list[AgentTransportChunk]:
         return build_chunks("assistant", event.content)
     if event.type == StreamEventType.ERROR:
         return build_chunks("error", event.content)
-    if event.type == StreamEventType.ROUTE:
-        return build_chunks("reasoning", _format_route(event))
-    if event.type == StreamEventType.REASONING_SUMMARY:
-        return build_chunks("reasoning", f"- 处理策略：{event.content}\n\n")
-    if event.type == StreamEventType.PROGRESS:
-        return build_chunks("reasoning", _format_progress(event))
-    if event.type == StreamEventType.SOURCE:
-        return build_chunks("reasoning", _format_source(event))
+    if event.type in {
+        StreamEventType.ROUTE,
+        StreamEventType.REASONING_SUMMARY,
+        StreamEventType.PROGRESS,
+        StreamEventType.SOURCE,
+    }:
+        return build_chunks("reasoning", f"- {event.content}\n\n")
     return []
-
-
-def _format_route(event: StreamEvent) -> str:
-    classification = event.data.get("classification")
-    if not classification:
-        return f"- 问题判断：{event.content}\n\n"
-    tasks = classification.get("tasks", [])
-    if not tasks:
-        return f"- 问题判断：{event.content}\n\n"
-    task_text = "；".join(
-        f"{task['task_id']}“{task['question']}”归为{CATEGORY_LABELS[task['category']]}"
-        for task in tasks
-    )
-    freshness = "其中包含需要较新数据的子问题" if any(
-        task["requires_fresh_data"] for task in tasks
-    ) else "不要求实时数据"
-    return f"- 问题拆解：{task_text}。{freshness}。\n\n"
-
-
-def _format_progress(event: StreamEvent) -> str:
-    details = event.data.get("details", {})
-    if event.data.get("stage") == "policy_assessment" and details:
-        conclusion = "现有资料足以支持回答" if details.get("sufficient") else "现有资料还不足，需要继续补充"
-        reason = details.get("reason", "")
-        return f"- 证据检查：{conclusion}。{reason}\n\n"
-    if event.data.get("stage") == "research_plan" and details.get("tasks"):
-        goals = "；".join(task["goal"] for task in details["tasks"])
-        return f"- 查询计划：{event.content}准备依次处理：{goals}。\n\n"
-    return f"- 处理进度：{event.content}\n\n"
-
-
-def _format_source(event: StreamEvent) -> str:
-    source_type = SOURCE_TYPE_LABELS[event.data["source_type"]]
-    title = event.data["title"]
-    law_name = event.data.get("law_name")
-    article_id = event.data.get("article_id")
-    legal_position = ""
-    if law_name:
-        legal_position = f"，对应《{law_name}》"
-    if article_id:
-        legal_position += f"第 {article_id} 条"
-    return f"- 参考资料：已从{source_type}确认“{title}”{legal_position}。\n\n"
 
 
 @app.post("/chat/stream")
