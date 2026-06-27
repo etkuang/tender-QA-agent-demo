@@ -1,6 +1,7 @@
 # coding: utf-8
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,12 +12,16 @@ PROJECT_ROOT = AGENT_LAYER_ROOT.parent
 class Settings(BaseSettings):
     """Agent runtime settings without business object construction."""
 
-    llm_api_key: str
-    llm_api_url: str
+    llm_provider: Literal["openai_compatible", "local_huggingface"] = "openai_compatible"
+    llm_api_key: str | None = None
+    llm_api_url: str | None = None
     llm_model: str = "qwen3-32b"
     llm_max_tokens: int = 1600  # Set the max output tokens per LLM response.
     llm_timeout_seconds: float = 60.0
     structured_output_retries: int = 1
+    llm_local_device_map: str = "auto"
+    llm_local_torch_dtype: str = "auto"
+    llm_local_trust_remote_code: bool = False
 
     knowledge_base_url: str
     knowledge_base_timeout_seconds: float = 30.0

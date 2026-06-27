@@ -2,7 +2,7 @@
 
 from datetime import date, datetime, timezone
 from enum import StrEnum
-from typing import Any, Literal, Self
+from typing import Any, Self
 
 from pydantic import BaseModel, Field, RootModel, model_validator
 
@@ -60,6 +60,12 @@ class QuickResponseType(StrEnum):
     NONE = "none"
 
 
+class TaskStatus(StrEnum):
+    SOLVED = "solved"
+    UNSOLVED = "unsolved"
+    BLOCKED = "blocked"
+
+
 class ChildTask(BaseModel):
     task_id: str
     question: str
@@ -80,15 +86,8 @@ class ChildTaskList(RootModel[list[ChildTask]]):
     root: list[ChildTask] = Field(min_length=1)
 
 
-class RoutePlan(BaseModel):
-    action: Literal["execute", "clarify", "general_answer"]
-    tasks: list[ChildTask]
-    reason: str
-
-
 class QuickResponseDecision(BaseModel):
-    intent: QuickResponseType
-    reason: str = Field(min_length=1)
+    quick_response_type: QuickResponseType
 
 
 class Evidence(BaseModel):
@@ -215,6 +214,22 @@ class WorkflowResult(BaseModel):
     tool_events: list[ToolEvent] = Field(default_factory=list)
     model_calls: int = 0
     run_id: str | None = None
+    status: TaskStatus = TaskStatus.SOLVED
+    unresolved_reason: str | None = None
+
+
+class ChildTaskOutcome(BaseModel):
+    task_id: str
+    category: Category
+    question: str
+    depends_on: list[str] = Field(default_factory=list)
+    status: TaskStatus
+    answer: str = ""
+    reason: str | None = None
+    evidence: list[Evidence] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
+    tool_events: list[ToolEvent] = Field(default_factory=list)
+    model_calls: int = 0
 
 
 class StreamEvent(BaseModel):

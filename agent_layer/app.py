@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from common.api_contracts.agent_api import Message
 from common.logger import get_logger
@@ -16,16 +17,15 @@ from agent_layer.errors import AgentError, ClassificationError
 from agent_layer.schemas import (
     Category,
     ChildTask,
-    Evidence,
-    RoutePlan,
+    ChildTaskOutcome,
     StreamEvent,
     StreamEventType,
+    TaskStatus,
     WorkflowResult,
 )
 from agent_layer.workflows.data_domain import DataDomainWorkflow
 from agent_layer.workflows.general import CompositeAnswerWorkflow, GeneralWorkflow
 from agent_layer.workflows.policy_graph import PolicyGraphWorkflow
-from agent_layer.workflows.router import WorkflowRouter
 
 logger = get_logger("agent.app")
 
@@ -35,7 +35,6 @@ class ApplicationDependencies:
     settings: Settings
     quick_classifier: QuickResponseClassifier
     classifier: QuestionClassifier
-    router: WorkflowRouter
     general_workflow: GeneralWorkflow
     composite_workflow: CompositeAnswerWorkflow
     policy_workflow: PolicyGraphWorkflow
@@ -60,7 +59,7 @@ class TenderQAApplication:
             stripped_message = user_message.strip()
             if stripped_message:
                 quick_decision = await self.dependencies.quick_classifier.classify(stripped_message)
-                quick = QUICK_RESPONSES.get(quick_decision.intent)
+                quick = QUICK_RESPONSES.get(quick_decision.quick_response_type)
             else:
                 quick = EMPTY_QUICK_RESPONSE
 
@@ -86,55 +85,34 @@ class TenderQAApplication:
             )
             classification_duration_ms = (time.perf_counter() - classification_started) * 1000
 
-            route = self.dependencies.router.decide(child_tasks)
             yield StreamEvent(
                 type=StreamEventType.ROUTE,
-                content=f"问题已拆解为 {len(route.tasks)} 个子任务。",
+                content=f"问题已拆解为 {len(child_tasks)} 个子任务。",
                 data={
                     "classification": {
                         "tasks": [task.model_dump(mode="json") for task in child_tasks],
                     },
-                    "route": route.model_dump(mode="json"),
                     "duration_ms": classification_duration_ms,
                 },
             )
             yield StreamEvent(
                 type=StreamEventType.REASONING_SUMMARY,
-                content=route.reason,
+                content="问题已拆成子任务；我会按依赖关系执行可处理任务，并说明无法解决或被依赖阻塞的任务。",
                 data={
-                    "categories": [task.category.value for task in route.tasks],
-                    "requires_fresh_data": any(task.requires_fresh_data for task in route.tasks),
+                    "categories": [task.category.value for task in child_tasks],
+                    "requires_fresh_data": any(task.requires_fresh_data for task in child_tasks),
                 },
             )
 
-            if route.action == "clarify":
-                answer = self.dependencies.router.clarification_message(child_tasks)
-                async for event in self._answer_events(answer):
-                    yield event
-                return
-
-            if route.action == "general_answer":
-                yield StreamEvent(
-                    type=StreamEventType.PROGRESS,
-                    content="这是通用问题，不需要查询专业数据库，正在直接组织回答。",
-                )
-                answer = await self.dependencies.general_workflow.run(
-                    user_message,
-                    history_text,
-                )
-                async for event in self._answer_events(answer):
-                    yield event
-                return
-
             yield StreamEvent(
                 type=StreamEventType.PROGRESS,
-                content="正在按子任务执行对应工作流，并共享依赖任务的结论和证据。",
+                content="正在按子任务依赖关系执行可处理任务。",
             )
             progress_queue = asyncio.Queue()
             progress_callback = progress_queue.put
             workflow_task = asyncio.create_task(
-                self._execute_route_plan(
-                    route,
+                self._execute_child_tasks(
+                    child_tasks,
                     user_message,
                     history_text,
                     progress_callback,
@@ -202,60 +180,100 @@ class TenderQAApplication:
                 content=answer[index : index + size],
             )
 
-    async def _execute_route_plan(
+    async def _execute_child_tasks(
             self,
-            route: RoutePlan,
+            tasks: list[ChildTask],
             original_question: str,
             history: str,
             progress_callback,
     ) -> WorkflowResult:
-        task_ids = {task.task_id for task in route.tasks}
-        for task in route.tasks:
-            if any(dependency not in task_ids for dependency in task.depends_on):
-                raise ClassificationError
-
-        pending = [task for task in route.tasks if task.category != Category.UNCLEAR]
-        completed = set()
+        pending = {task.task_id: task for task in tasks}
+        outcomes = {}
         evidence = []
         tool_events = []
-        child_answers = []
         model_calls = 0
+
         while pending:
-            ready = [task for task in pending if set(task.depends_on).issubset(completed)]
+            ready = []
+            blocked_now = []
+            for task in list(pending.values()):
+                missing_dependencies = [
+                    dependency
+                    for dependency in task.depends_on
+                    if dependency not in pending and dependency not in outcomes
+                ]
+                if missing_dependencies:
+                    blocked_now.append(
+                        (
+                            task,
+                            f"依赖的子任务不存在：{', '.join(missing_dependencies)}。",
+                        )
+                    )
+                    continue
+
+                dependency_outcomes = [
+                    outcomes[dependency]
+                    for dependency in task.depends_on
+                    if dependency in outcomes
+                ]
+                if len(dependency_outcomes) != len(task.depends_on):
+                    continue
+
+                unsolved_dependencies = [
+                    outcome
+                    for outcome in dependency_outcomes
+                    if outcome.status != TaskStatus.SOLVED
+                ]
+                if unsolved_dependencies:
+                    dependency_ids = ", ".join(outcome.task_id for outcome in unsolved_dependencies)
+                    blocked_now.append((task, f"依赖的子任务未解决：{dependency_ids}。"))
+                    continue
+
+                ready.append(task)
+
+            for task, reason in blocked_now:
+                outcomes[task.task_id] = self._blocked_outcome(task, reason)
+                pending.pop(task.task_id)
+
             if not ready:
-                raise ClassificationError
+                if not blocked_now:
+                    for task in list(pending.values()):
+                        outcomes[task.task_id] = self._blocked_outcome(
+                            task,
+                            "子任务依赖关系存在循环，无法确定执行顺序。",
+                        )
+                        pending.pop(task.task_id)
+                continue
+
             results = await asyncio.gather(
                 *(
                     self._run_child_task(
                         task,
                         original_question,
                         history,
-                        child_answers,
+                        list(outcomes.values()),
                         progress_callback,
                     )
                     for task in ready
                 )
             )
             for task, result in zip(ready, results, strict=True):
-                child_answers.append(
-                    {
-                        "task_id": task.task_id,
-                        "category": task.category.value,
-                        "question": task.question,
-                        "answer": result.answer,
-                    }
-                )
+                outcome = self._outcome_from_result(task, result)
+                outcomes[task.task_id] = outcome
                 evidence.extend(result.evidence)
                 tool_events.extend(result.tool_events)
                 model_calls += result.model_calls
-                completed.add(task.task_id)
-            ready_ids = {task.task_id for task in ready}
-            pending = [task for task in pending if task.task_id not in ready_ids]
+                pending.pop(task.task_id)
 
+        child_results = [
+            outcomes[task.task_id].model_dump(mode="json")
+            for task in tasks
+            if task.task_id in outcomes
+        ]
         synthesis = await self.dependencies.composite_workflow.run(
             original_question,
             history,
-            child_answers,
+            child_results,
             evidence,
         )
         tool_events.extend(synthesis.tool_events)
@@ -272,36 +290,84 @@ class TenderQAApplication:
             task: ChildTask,
             original_question: str,
             history: str,
-            child_answers: list[dict],
+            child_results: list[ChildTaskOutcome],
             progress_callback,
     ) -> WorkflowResult:
-        task_question = self._task_question(task, child_answers)
-        if task.category == Category.OTHER:
-            answer = await self.dependencies.general_workflow.run(task_question, history)
-            return WorkflowResult(answer=answer, model_calls=1)
-        if task.category == Category.POLICY:
-            return await self.dependencies.policy_workflow.run(
-                original_question,
+        if task.category == Category.UNCLEAR:
+            reason = task.clarification_question
+            return WorkflowResult(
+                answer=reason,
+                status=TaskStatus.UNSOLVED,
+                unresolved_reason=reason,
+            )
+
+        task_question = self._task_question(task, child_results)
+        try:
+            if task.category == Category.OTHER:
+                answer = await self.dependencies.general_workflow.run(task_question, history)
+                return WorkflowResult(answer=answer, model_calls=1)
+            if task.category == Category.POLICY:
+                return await self.dependencies.policy_workflow.run(
+                    original_question,
+                    task_question,
+                    history,
+                    progress_callback,
+                )
+            workflow = self.dependencies.data_workflows[task.category]
+            return await workflow.run(
                 task_question,
                 history,
+                [],
+                task.requires_fresh_data,
                 progress_callback,
             )
-        workflow = self.dependencies.data_workflows[task.category]
-        return await workflow.run(
-            task_question,
-            history,
-            [],
-            task.requires_fresh_data,
-            progress_callback,
+        except AgentError as exc:
+            return WorkflowResult(
+                answer=exc.user_message,
+                status=TaskStatus.UNSOLVED,
+                unresolved_reason=exc.user_message,
+            )
+
+    @staticmethod
+    def _outcome_from_result(task: ChildTask, result: WorkflowResult) -> ChildTaskOutcome:
+        reason = result.unresolved_reason
+        return ChildTaskOutcome(
+            task_id=task.task_id,
+            category=task.category,
+            question=task.question,
+            depends_on=task.depends_on,
+            status=result.status,
+            answer=result.answer,
+            reason=reason,
+            evidence=result.evidence,
+            citations=result.citations,
+            tool_events=result.tool_events,
+            model_calls=result.model_calls,
         )
 
     @staticmethod
-    def _task_question(task: ChildTask, child_answers: list[dict]) -> str:
-        related = [item for item in child_answers if item["task_id"] in task.depends_on]
+    def _blocked_outcome(task: ChildTask, reason: str) -> ChildTaskOutcome:
+        return ChildTaskOutcome(
+            task_id=task.task_id,
+            category=task.category,
+            question=task.question,
+            depends_on=task.depends_on,
+            status=TaskStatus.BLOCKED,
+            answer=reason,
+            reason=reason,
+        )
+
+    @staticmethod
+    def _task_question(task: ChildTask, child_results: list[ChildTaskOutcome]) -> str:
+        related = [
+            item
+            for item in child_results
+            if item.task_id in task.depends_on and item.status == TaskStatus.SOLVED
+        ]
         if not related:
             return task.question
         context_lines = "\n".join(
-            f"- {item['question']}：{item['answer']}"
+            f"- {item.question}：{item.answer}"
             for item in related
         )
         return f"{task.question}\n\n已完成的相关子任务结论：\n{context_lines}"

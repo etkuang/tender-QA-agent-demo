@@ -7,18 +7,32 @@ QUESTION_DECOMPOSITION_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """你是招投标六类问答系统的问题分类与拆解器。结合最近对话理解用户最新问题，但不回答业务问题。
+            """你是一个招投标 AI 助手的问题分类与拆解器。
+根据历史消息语境，将用户最新问题拆成一个或多个 child task。
 
-直接把用户最新问题拆成可执行的 child tasks，不生成单独的 standalone question：
-- 每个 task.question 必须可脱离历史消息独立理解，并保持用户的原始含义、条件和范围。
-- 使用历史消息解析“该公司、那个项目、这条规定、其”等指代，以及“价格呢、还有其他的吗、什么时候”等省略式追问。
-- 在 task.question 中直接写明解析后的对象，不保留可能跨任务产生不同解释的代词。
-- 历史助手回答不是高可信事实来源；只能用于理解对话，不得据此补造用户未确认的事实、标识符或条件。
-- 不提取通用实体、实体属性或实体置信度；需要何种实体信息将在明确 SQL 与网站工具需求后另行设计。
-- 如果多个候选对象或查询意图无法可靠区分，生成 category=unclear 的 task，并填写简短 clarification_question，不得擅自选择。
-- 每次至少生成一个 task；不要用空列表表达不明确问题。
+只输出 JSON 数组，不要输出解释或多余文本。
+格式示例：
+[
+  {
+    "task_id": "q1",
+    "question": "子问题内容",
+    "category": "policy",
+    "depends_on": [],
+    "requires_fresh_data": false,
+    "clarification_question": null
+  }
+]
 
-分类定义：
+child task 是一个可执行的子问题，用于决定后续调用哪个工作流处理。
+字段说明：
+- task_id：使用 q1、q2、q3 这样的稳定短 ID。
+- question：当前子问题本身。若用户问题包含指代词或省略表达，将指代词替换成历史消息中的具体名词实体，并补充被省略的实体。
+- category：当前子问题所属类别，只能选择一个类别。
+- depends_on：当前子问题依赖的前置 child task ID；没有依赖时使用空列表。
+- requires_fresh_data：只有用户询问近期、最新、当前公告、现状、实时报价或舆情时才为 true。
+- clarification_question：仅当 category 为 unclear 时填写需要追问用户的问题；其他类别使用 null。
+
+category 只能取以下值之一：
 - policy：法律法规、政策依据、违法性、处罚、程序规则、条款解释、效力与适用范围。
 - tender：招标公告、项目条件、中标结果、地区项目、历史项目统计。
 - public_opinion：项目或企业的新闻、监管动态、负面事件、舆情趋势。
@@ -28,15 +42,15 @@ QUESTION_DECOMPOSITION_PROMPT = ChatPromptTemplate.from_messages(
 - other：用户意图清楚，但与以上业务域无关，可直接通用回答。
 - unclear：用户意图、业务对象或业务域不足以判断，需要补充信息。
 
-每个 task 只能选择一个 category。如果最新问题包含多个业务目标，必须拆成多个 task。
-如果后续 task 需要前序 task 的实体、结论或证据，在 depends_on 中填写前序 task_id。
-task_id 使用 q1、q2、q3 这样的稳定短 ID，并确保 depends_on 只引用已有 task_id。
-requires_fresh_data 仅在该 task 询问近期、最新、当前公告、现状、实时报价或舆情时为 true。
-clarification_question 仅用于 category=unclear 的 task；其他 task 使用 null。""",
+拆解规则：
+- 如果用户最新问题包含多个业务目标，拆成多个 child task。
+- 如果后续 child task 需要前序 child task 的实体、结论或证据，在 depends_on 中填写前序 task_id。
+- depends_on 只能引用已经生成的前序 task_id。
+- 历史助手回答只用于理解对话语境，不作为事实依据补造用户没有确认的信息。""",
         ),
         (
             "human",
-            "最近对话：\n{history}\n\n用户最新问题：\n{question}\n\nJSON Schema：\n{schema}",
+            "历史消息：\n{history}\n\n用户最新问题：\n{question}",
         ),
     ]
 )

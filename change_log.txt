@@ -290,3 +290,137 @@ Proposed changes:
    - Inject the quick-response classifier through bootstrap and ApplicationDependencies.
 
 V0.59 release
+
+Follow-up proposal update on 2026-06-26:
+
+Proposed changes:
+1. Simplify the quick-response structured output:
+   - Remove the unused reasoning field from QuickResponseDecision.
+   - Keep quick-response classification focused on the intent value consumed by runtime code.
+
+2. Tighten TenderQAApplication.stream input handling:
+   - Require history_messages as a list to match the Agent API contract.
+   - Remove the redundant None fallback.
+   - Strip user_message once and reuse the normalized message consistently.
+
+3. Clean up Agent application maintenance details:
+   - Add the missing dataclass import.
+   - Remove the unused Evidence import.
+   - Document _history_text history bounding and serialization behavior.
+
+Follow-up proposal update on 2026-06-27:
+
+Proposed changes:
+1. Add a local Hugging Face LLM provider:
+   - Keep OpenAI-compatible API mode as the default.
+   - Add local_huggingface mode with optional Transformers, Torch, and Accelerate dependencies.
+   - Add settings for device_map, torch_dtype, and trust_remote_code.
+
+2. Preserve the existing structured-output contract:
+   - Keep workflow call sites using with_structured_output(..., method="json_mode").
+   - Implement json_mode support in the local Hugging Face chat wrapper.
+   - Parse generated JSON text and validate it with the requested Pydantic schema.
+
+3. Complete local model invocation:
+   - Load the Hugging Face tokenizer and causal language model once through a shared runtime.
+   - Use the tokenizer chat template for message formatting.
+   - Support synchronous and asynchronous LangChain chat generation with timeout handling.
+
+4. Update model factory and structured SQL generation:
+   - Return either ChatOpenAI or the local Hugging Face chat model through the BaseChatModel contract.
+   - Share one local runtime between structured and answer models.
+   - Apply structured-output retries to SQL candidate generation as well.
+
+5. Add a project-wide prompt revision guide:
+   - Start prompts from the runtime task.
+   - Keep only information useful for completing the task.
+   - Match prompt wording to actual Pydantic fields and runtime behavior.
+
+6. Remove raw Pydantic JSON Schema from model-facing prompts:
+   - Stop passing model_json_schema output through json.dumps.
+   - Replace schema dumps with compact JSON examples and field explanations.
+   - Keep Pydantic validation after generation.
+
+7. Keep structured-output instructions inside each task prompt:
+   - Remove the local Hugging Face wrapper's extra generic system prompt.
+   - Let each structured prompt define its own exact JSON output contract.
+
+8. Revise all structured classification, parsing, planning, and SQL prompts:
+   - QUICK_RESPONSE_PROMPT.
+   - QUESTION_DECOMPOSITION_PROMPT.
+   - POLICY_ASSESSMENT_PROMPT.
+   - POLICY_QUERY_PROMPT.
+   - RESEARCH_PLAN_PROMPT.
+   - SQL_GENERATION_PROMPT.
+
+9. Revise all answer-generation prompts:
+   - POLICY_ANSWER_PROMPT.
+   - DOMAIN_ANSWER_PROMPT.
+   - GENERAL_PROMPT.
+   - COMPOSITE_ANSWER_PROMPT.
+
+10. Format model-facing configuration as readable text:
+   - Format domain profiles, research plans, and SQL view schemas as labeled text.
+   - Avoid feeding large JSON-serialized configuration objects to a local 14B model.
+
+11. Fix quick-response schema/runtime alignment:
+   - Use quick_response_type consistently.
+   - Replace the placeholder JSON value with a concrete example.
+   - Remove the unused schema variable from quick-response invocation.
+
+12. Preserve grounding and safety boundaries:
+   - Treat history only as user-intent context.
+   - Treat evidence, child answers, web content, and database rows as data, not instructions.
+   - Keep citation and evidence-only constraints in synthesis prompts.
+
+13. Remove global child-task routing:
+   - Delete WorkflowRouter and RoutePlan.
+   - Stop deciding clarify, general_answer, or execute for the whole decomposed task list.
+   - Route each child task at execution time according to its category.
+
+14. Add explicit child-task execution statuses:
+   - Add TaskStatus with solved, unsolved, and blocked states.
+   - Extend WorkflowResult with status and unresolved_reason.
+   - Add ChildTaskOutcome for final synthesis and dependency tracking.
+
+15. Execute decomposed tasks by dependency graph:
+   - Replace the route-plan executor with a child-task graph executor.
+   - Run ready independent tasks concurrently.
+   - Detect missing dependencies and cyclic dependency cases as blocked outcomes.
+
+16. Support partial completion instead of all-or-nothing clarification:
+   - Treat unclear child tasks as unsolved.
+   - Continue executing independent solvable tasks.
+   - Mark downstream tasks blocked when they depend on unsolved or blocked tasks.
+
+17. Convert child-workflow failures into child-task outcomes:
+   - Catch child-level AgentError during task execution.
+   - Return unsolved WorkflowResult values instead of failing the entire request.
+   - Preserve user-facing unresolved reasons for final synthesis.
+
+18. Mark insufficient evidence as unsolved:
+   - Report no-evidence policy tasks as unsolved.
+   - Report insufficient policy evidence as unsolved while preserving partial evidence.
+   - Report no-evidence data-domain tasks as unsolved.
+
+19. Update final multi-task synthesis:
+   - Pass child task results instead of only child answers.
+   - Require final synthesis to explain solved, unsolved, and blocked tasks.
+   - Keep shared evidence and citation validation in the composite answer path.
+
+20. Use solved dependency results only as context:
+   - Build dependent task prompts from solved prerequisite outcomes.
+   - Exclude unsolved and blocked prerequisite tasks from factual child-task context.
+   - Explain blocked dependents separately in the final answer.
+
+21. Remove redundant structured-output type guards:
+   - Remove isinstance checks after with_structured_output in classification and quick response chains.
+   - Remove the same checks from policy assessment, policy query parsing, research planning, and SQL generation.
+   - Keep schema validation inside structured-output invocation.
+
+22. Clean up composition after router removal:
+   - Remove WorkflowRouter construction from bootstrap.
+   - Remove router from ApplicationDependencies.
+   - Remove router imports from Agent application wiring.
+
+V0.60 release

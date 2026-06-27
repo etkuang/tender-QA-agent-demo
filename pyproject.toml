@@ -27,3 +27,9 @@ dependencies = [
     "streamlit>=1.57.0",
     "uvicorn>=0.48.0",
 ]
+[project.optional-dependencies]
+local-llm = [
+    "accelerate>=1.0.0",
+    "torch>=2.6.0",
+    "transformers>=4.49.0",
+]

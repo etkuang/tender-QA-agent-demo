@@ -21,7 +21,6 @@ from agent_layer.workflows.data_domain import DataDomainWorkflow, ResearchPlanne
 from agent_layer.workflows.general import CompositeAnswerWorkflow, GeneralWorkflow
 from agent_layer.workflows.policy import PolicyAssessmentChain, PolicyQueryParser
 from agent_layer.workflows.policy_graph import PolicyGraphWorkflow
-from agent_layer.workflows.router import WorkflowRouter
 
 
 async def build_application(
@@ -44,7 +43,6 @@ async def build_application(
 
     classifier = QuestionClassifier(structured_model, runtime_settings)
     quick_classifier = QuickResponseClassifier(structured_model, runtime_settings)
-    router = WorkflowRouter()
     general_workflow = GeneralWorkflow(answer_model)
     composite_workflow = CompositeAnswerWorkflow(answer_model, runtime_settings)
     policy_assessment = PolicyAssessmentChain(structured_model, runtime_settings)
@@ -90,7 +88,6 @@ async def build_application(
         settings=runtime_settings,
         quick_classifier=quick_classifier,
         classifier=classifier,
-        router=router,
         general_workflow=general_workflow,
         composite_workflow=composite_workflow,
         policy_workflow=policy_workflow,

@@ -24,6 +24,7 @@ from agent_layer.schemas import (
     PolicyQuery,
     RetrievalAssessment,
     SourceTier,
+    TaskStatus,
     ToolEvent,
     WebsiteQuery,
     WorkflowResult,
@@ -283,6 +284,8 @@ class PolicyGraphWorkflow:
                 tool_events=state.get("tool_events", []),
                 model_calls=state.get("model_calls", 0),
                 run_id=state["run_id"],
+                status=TaskStatus.UNSOLVED,
+                unresolved_reason=NO_RESULTS_RESPONSE,
             )
             return {"result": result}
         assessment = state.get("assessment") or self._empty_assessment()
@@ -294,9 +297,9 @@ class PolicyGraphWorkflow:
         )
         if not assessment.sufficient:
             missing_information = "；".join(assessment.missing_information)
-            answer = f"Current evidence is insufficient for a reliable policy answer: {assessment.reason}"
+            answer = f"当前政策证据不足，无法可靠回答：{assessment.reason}"
             if missing_information:
-                answer += f" Missing information: {missing_information}."
+                answer += f" 缺少信息：{missing_information}。"
             answer = ensure_source_section(answer, citations)
             result = WorkflowResult(
                 answer=answer,
@@ -305,6 +308,8 @@ class PolicyGraphWorkflow:
                 tool_events=state.get("tool_events", []),
                 model_calls=state.get("model_calls", 0),
                 run_id=state["run_id"],
+                status=TaskStatus.UNSOLVED,
+                unresolved_reason=answer,
             )
             return {"result": result}
 

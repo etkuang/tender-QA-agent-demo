@@ -66,6 +66,6 @@ class SQLTimeoutError(AgentError):
 
 
 def raise_model_error(error: Exception, error_type: type[AgentError]) -> None:
-    if isinstance(error, (httpx.TimeoutException, APITimeoutError)):
+    if isinstance(error, (TimeoutError, httpx.TimeoutException, APITimeoutError)):
         raise ModelTimeoutError from error
     raise error_type from error

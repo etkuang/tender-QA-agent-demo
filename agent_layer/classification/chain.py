@@ -1,7 +1,5 @@
 # coding: utf-8
 
-import json
-
 from langchain_core.language_models import BaseChatModel
 
 from common.logger import get_logger
@@ -30,13 +28,9 @@ class QuestionClassifier:
                 {
                     "question": question,
                     "history": history,
-                    "schema": json.dumps(ChildTaskList.model_json_schema(), ensure_ascii=False),
                 }
             )
         except Exception as exc:
             logger.exception("structured question understanding failed")
             raise_model_error(exc, ClassificationError)
-        if not isinstance(result, ChildTaskList):
-            logger.error("question understanding returned unexpected type | type=%s", type(result).__name__)
-            raise ClassificationError
         return result.root

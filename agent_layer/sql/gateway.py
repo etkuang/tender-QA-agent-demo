@@ -21,17 +21,53 @@ SQL_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """你为只读分析视图生成单条 SELECT 或只读 CTE。
-只能使用提供的视图和字段；禁止写操作、DDL、系统表、文件函数和未授权字段。
-企业名称、地区、日期、型号等用户值使用命名参数，例如 :company_name，不直接拼接。
-聚合、排名和金额必须遵守字段说明中的统计口径。不要添加解释文本。""",
+            """你是只读 SQL 候选生成器。
+根据研究任务和允许视图生成一个 SQLCandidate。
+
+只输出 JSON，不要输出解释或多余文本。
+格式示例：
+{
+  "statement": "SELECT column_name FROM view_name WHERE field = :value LIMIT 200",
+  "parameters": {"value": "参数值"},
+  "selected_views": ["view_name"]
+}
+
+字段说明：
+- statement：单条 SELECT 或只读 CTE，不生成写操作、DDL、系统表、文件函数或未授权字段。
+- parameters：用户给出的企业名称、地区、日期、型号等值必须使用命名参数，不直接拼接到 SQL 字符串。
+- selected_views：statement 实际使用的视图名称。
+
+SQL 规则：
+- 只能使用允许视图和字段。
+- 聚合、排名和金额必须遵守字段说明中的统计口径。
+- 上次校验错误不为空时，根据错误修正 SQL。""",
         ),
         (
             "human",
-            "研究任务：\n{task}\n\n允许视图：\n{schemas}\n\n上次校验错误：\n{feedback}\n\nJSON Schema：\n{output_schema}",
+            "研究任务：\n{task}\n\n允许视图：\n{schemas}\n\n上次校验错误：\n{feedback}",
         ),
     ]
 )
+
+
+def _format_view_schemas(schemas: list[ViewSchema]) -> str:
+    blocks = []
+    for schema in schemas:
+        columns = "\n".join(
+            f"- {name}: {description}"
+            for name, description in schema.columns.items()
+        )
+        blocks.append(
+            "\n".join(
+                [
+                    f"视图：{schema.name}",
+                    f"说明：{schema.description}",
+                    "字段：",
+                    columns,
+                ]
+            )
+        )
+    return "\n\n".join(blocks)
 
 
 class SQLExecutor(Protocol):
@@ -148,17 +184,16 @@ class ReadOnlySQLGateway:
         feedback: str,
     ) -> SQLCandidate:
         try:
-            result = await self.chain.ainvoke(
+            result = await self.chain.with_retry(
+                stop_after_attempt=self.settings.structured_output_retries + 1,
+            ).ainvoke(
                 {
                     "task": task.model_dump_json(),
-                    "schemas": json.dumps([schema.model_dump() for schema in schemas], ensure_ascii=False),
+                    "schemas": _format_view_schemas(schemas),
                     "feedback": feedback,
-                    "output_schema": json.dumps(SQLCandidate.model_json_schema(), ensure_ascii=False),
                 }
             )
         except Exception as exc:
             logger.exception("SQL generation failed | task_id=%s", task.task_id)
             raise SQLValidationError from exc
-        if not isinstance(result, SQLCandidate):
-            raise SQLValidationError
         return result
