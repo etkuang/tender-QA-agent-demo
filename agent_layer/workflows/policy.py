@@ -22,6 +22,7 @@ from agent_layer.retrieval.adapter import EvidenceAdapter
 from agent_layer.retrieval.pipeline import RetrievalPipeline
 from agent_layer.schemas import (
     Category,
+    DependencyOutcome,
     PolicyQuery,
     RetrievalAssessment,
     SourceTier,
@@ -33,6 +34,7 @@ from agent_layer.workflows.common import (
     build_citations,
     citations_are_valid,
     ensure_source_section,
+    format_dependency_outcomes,
     format_evidence,
     rank_evidence,
 )
@@ -81,7 +83,10 @@ POLICY_ASSESSMENT_PROMPT = ChatPromptTemplate.from_messages(
 - follow_up_queries：需要继续本地检索时给出具体检索词。
 - usable_evidence_ids：只填写对最终回答有用且真实存在的 evidence_id。""",
         ),
-        ("human", "问题：\n{question}\n\n当前证据：\n{evidence}"),
+        (
+            "human",
+            "问题：\n{question}\n\n依赖子任务结论：\n{dependency_outcomes}\n\n当前证据：\n{evidence}",
+        ),
     ]
 )
 
@@ -112,7 +117,7 @@ POLICY_QUERY_PROMPT = ChatPromptTemplate.from_messages(
         ),
         (
             "human",
-            "child task：\n{question}\n\n历史消息：\n{history}",
+            "child task：\n{question}\n\n依赖子任务结论：\n{dependency_outcomes}\n\n历史消息：\n{history}",
         ),
     ]
 )
@@ -135,7 +140,7 @@ POLICY_ANSWER_PROMPT = ChatPromptTemplate.from_messages(
         ),
         (
             "human",
-            "用户最新问题：\n{original_question}\n\nchild task：\n{question}\n\n历史消息：\n{history}\n\n"
+            "child task：\n{question}\n\n依赖子任务结论：\n{dependency_outcomes}\n\n历史消息：\n{history}\n\n"
             "充分性评估：\n{assessment}\n\n证据：\n{evidence}"
             "\n\n引用修正要求：\n{citation_feedback}",
         ),
@@ -152,7 +157,13 @@ class PolicyAssessmentChain:
         )
         self.chain = POLICY_ASSESSMENT_PROMPT | structured
 
-    async def assess(self, question: str, evidence_text: str, evidence_count: int) -> RetrievalAssessment:
+    async def assess(
+        self,
+        question: str,
+        dependency_outcomes: list[DependencyOutcome],
+        evidence_text: str,
+        evidence_count: int,
+    ) -> RetrievalAssessment:
         if evidence_count == 0:
             return RetrievalAssessment(
                 sufficient=False,
@@ -169,6 +180,7 @@ class PolicyAssessmentChain:
             ).ainvoke(
                 {
                     "question": question,
+                    "dependency_outcomes": format_dependency_outcomes(dependency_outcomes),
                     "evidence": evidence_text,
                 }
             )
@@ -187,7 +199,12 @@ class PolicyQueryParser:
         self.chain = POLICY_QUERY_PROMPT | structured
         self.settings = settings
 
-    async def parse(self, question: str, history: str) -> PolicyQuery:
+    async def parse(
+        self,
+        question: str,
+        history: str,
+        dependency_outcomes: list[DependencyOutcome],
+    ) -> PolicyQuery:
         try:
             result = await self.chain.with_retry(
                 stop_after_attempt=self.settings.structured_output_retries + 1,
@@ -195,6 +212,7 @@ class PolicyQueryParser:
                 {
                     "question": question,
                     "history": history,
+                    "dependency_outcomes": format_dependency_outcomes(dependency_outcomes),
                 }
             )
         except Exception as exc:

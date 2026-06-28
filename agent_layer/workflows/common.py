@@ -4,7 +4,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-from agent_layer.schemas import Category, Citation, Evidence
+from agent_layer.schemas import Category, Citation, DependencyOutcome, Evidence
 
 
 class DomainProfile(BaseModel):
@@ -17,6 +17,15 @@ class DomainProfile(BaseModel):
     freshness_policy: str
     analysis_template: str
     citation_policy: str
+
+
+def format_dependency_outcomes(dependency_outcomes: list[DependencyOutcome]) -> str:
+    if not dependency_outcomes:
+        return "无。"
+    return "\n".join(
+        f"- {outcome.task_id}：{outcome.question}：{outcome.answer}"
+        for outcome in dependency_outcomes
+    )
 
 
 def format_evidence(

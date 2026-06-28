@@ -60,12 +60,6 @@ class QuickResponseType(StrEnum):
     NONE = "none"
 
 
-class TaskStatus(StrEnum):
-    SOLVED = "solved"
-    UNSOLVED = "unsolved"
-    BLOCKED = "blocked"
-
-
 class ChildTask(BaseModel):
     task_id: str
     question: str
@@ -75,7 +69,9 @@ class ChildTask(BaseModel):
     clarification_question: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
-    def validate_clarification(self) -> Self:
+    def validate_task_contract(self) -> Self:
+        if len(self.depends_on) != len(set(self.depends_on)):
+            raise ValueError("depends_on must not contain duplicated task ids")
         has_clarification = self.clarification_question is not None
         if (self.category == Category.UNCLEAR) != has_clarification:
             raise ValueError("Only unclear child tasks must provide clarification_question")
@@ -214,13 +210,19 @@ class WorkflowResult(BaseModel):
     tool_events: list[ToolEvent] = Field(default_factory=list)
     model_calls: int = 0
     run_id: str | None = None
-    status: TaskStatus = TaskStatus.SOLVED
+    status: Literal["solved", "unsolved"] = "solved"
     unresolved_reason: str | None = None
+
+
+class DependencyOutcome(BaseModel):
+    task_id: str
+    question: str
+    answer: str
 
 
 class ChildTaskOutcome(BaseModel):
     task_id: str
-    status: TaskStatus
+    status: Literal["solved", "unsolved", "blocked"]
     answer: str | None = None
     unresolved_reason: str | None = None
     evidence: list[Evidence] = Field(default_factory=list)

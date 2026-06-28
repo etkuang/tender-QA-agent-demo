@@ -17,9 +17,9 @@ from agent_layer.schemas import (
     Category,
     ChildTask,
     ChildTaskOutcome,
+    DependencyOutcome,
     StreamEvent,
     StreamEventType,
-    TaskStatus,
     ToolEvent,
     WorkflowResult,
 )
@@ -50,7 +50,7 @@ class TaskGraph:
             raise DecompositionError("question decomposer returned duplicate child task ids")
 
         task_map = {task.task_id: task for task in tasks}
-        dependencies = {task.task_id: task.depends_on.copy() for task in tasks}
+        dependencies = {task.task_id: set(task.depends_on) for task in tasks}
 
         if any(dependency not in task_map for task in tasks for dependency in task.depends_on):
             raise DecompositionError("question decomposer returned invalid child task dependencies")
@@ -92,7 +92,7 @@ class TaskGraph:
         return self._task_map.copy()
 
     @property
-    def dependencies(self) -> dict[str, list[str]]:
+    def dependencies(self) -> dict[str, set[str]]:
         return {
             task_id: task_dependencies.copy()
             for task_id, task_dependencies in self._dependencies.items()
@@ -135,7 +135,7 @@ class StreamEventFormatter:
             dependencies = dependencies_by_task[task_id]
             dependency_text = ""
             if dependencies:
-                dependency_text = f"，依赖 {', '.join(dependencies)}"
+                dependency_text = f"，依赖 {', '.join(sorted(dependencies))}"
             freshness_text = ""
             if task.requires_fresh_data:
                 freshness_text = "，需要较新或实时数据"
@@ -230,6 +230,15 @@ class StreamEventFormatter:
                 return "官方政策网页检索暂时不可用，本轮只使用已取得资料。"
             if event.status == "completed":
                 return f"官方政策网页检索返回 {details.get('evidence_count', 0)} 条可用资料。"
+        if event.stage == "general_internet":
+            if event.status == "started":
+                return "正在查询通用互联网资料。"
+            if event.status == "skipped":
+                return "通用互联网检索未配置，本次无法查询实时通用信息。"
+            if event.status == "failed":
+                return "通用互联网检索暂时不可用。"
+            if event.status == "completed":
+                return f"通用互联网检索返回 {details.get('evidence_count', 0)} 条可用资料。"
         if event.stage == "policy_synthesis":
             if event.status == "started":
                 return "正在根据已选政策资料生成政策子任务回答。"
@@ -282,43 +291,42 @@ class ChildWorkflowRunner:
     async def run(
         self,
         task: ChildTask,
-        original_question: str,
         history: str,
-        child_outcomes: dict[str, ChildTaskOutcome],
-        task_map: dict[str, ChildTask],
+        dependency_outcomes: list[DependencyOutcome],
         enqueue_progress_event,
     ) -> ChildTaskOutcome:
         if task.category == Category.UNCLEAR:
             reason = task.clarification_question
             return ChildTaskOutcome(
                 task_id=task.task_id,
-                status=TaskStatus.UNSOLVED,
-                answer=reason,
+                status="unsolved",
+                answer=None,
                 unresolved_reason=reason,
             )
 
-        task_question = self._task_question(task, child_outcomes, task_map)
         try:
             if task.category == Category.OTHER:
-                answer = await self.dependencies.general_workflow.run(task_question, history)
-                return ChildTaskOutcome(
-                    task_id=task.task_id,
-                    status=TaskStatus.SOLVED,
-                    answer=answer,
-                    model_calls=1,
-                )
-            if task.category == Category.POLICY:
-                result = await self.dependencies.policy_workflow.run(
-                    original_question,
-                    task_question,
+                result = await self.dependencies.general_workflow.run(
+                    task.question,
                     history,
+                    dependency_outcomes,
+                    task.requires_fresh_data,
+                    enqueue_progress_event,
+                )
+            elif task.category == Category.POLICY:
+                result = await self.dependencies.policy_workflow.run(
+                    task.question,
+                    history,
+                    dependency_outcomes,
+                    task.requires_fresh_data,
                     enqueue_progress_event,
                 )
             else:
                 workflow = self.dependencies.data_workflows[task.category]
                 result = await workflow.run(
-                    task_question,
+                    task.question,
                     history,
+                    dependency_outcomes,
                     [],
                     task.requires_fresh_data,
                     enqueue_progress_event,
@@ -326,40 +334,21 @@ class ChildWorkflowRunner:
         except AgentError as exc:
             return ChildTaskOutcome(
                 task_id=task.task_id,
-                status=TaskStatus.UNSOLVED,
-                answer=exc.user_message,
+                status="unsolved",
+                answer=None,
                 unresolved_reason=exc.user_message,
             )
 
         return ChildTaskOutcome(
             task_id=task.task_id,
             status=result.status,
-            answer=result.answer,
+            answer=result.answer if result.status == "solved" else None,
             unresolved_reason=result.unresolved_reason,
             evidence=result.evidence,
             citations=result.citations,
             tool_events=result.tool_events,
             model_calls=result.model_calls,
         )
-
-    @staticmethod
-    def _task_question(
-        task: ChildTask,
-        child_outcomes: dict[str, ChildTaskOutcome],
-        task_map: dict[str, ChildTask],
-    ) -> str:
-        related = [
-            (task_map[dependency_id], child_outcomes[dependency_id])
-            for dependency_id in task.depends_on
-            if child_outcomes[dependency_id].status == TaskStatus.SOLVED
-        ]
-        if not related:
-            return task.question
-        context_lines = "\n".join(
-            f"- {related_task.question}：{outcome.answer}"
-            for related_task, outcome in related
-        )
-        return f"{task.question}\n\n已完成的相关子任务结论：\n{context_lines}"
 
 
 class ChildTaskExecutor:
@@ -390,13 +379,19 @@ class ChildTaskExecutor:
         running_executions = {}
 
         def start_child_task(child_task: ChildTask) -> None:
+            dependency_outcomes = [
+                DependencyOutcome(
+                    task_id=dependency_id,
+                    question=task_map[dependency_id].question,
+                    answer=outcomes[dependency_id].answer,
+                )
+                for dependency_id in child_task.depends_on
+            ]
             execution_task = asyncio.create_task(
                 self.child_workflow_runner.run(
                     child_task,
-                    original_question,
                     history,
-                    outcomes.copy(),
-                    task_map,
+                    dependency_outcomes,
                     enqueue_progress_event,
                 )
             )
@@ -406,7 +401,7 @@ class ChildTaskExecutor:
         def block_child_task(child_task: ChildTask, reason: str) -> None:
             outcomes[child_task.task_id] = ChildTaskOutcome(
                 task_id=child_task.task_id,
-                status=TaskStatus.BLOCKED,
+                status="blocked",
                 answer=None,
                 unresolved_reason=reason,
             )
@@ -414,21 +409,17 @@ class ChildTaskExecutor:
             schedule_dependents(child_task.task_id)
 
         def schedule_dependents(task_id: str) -> None:
+            outcome = outcomes[task_id]
             for dependent_id in dependents_by_task[task_id]:
                 if dependent_id not in pending:
                     continue
                 dependent_child_task = task_map[dependent_id]
-                dependencies = dependencies_by_task[dependent_id]
-                if not all(dependency_id in outcomes for dependency_id in dependencies):
-                    continue
-                unsolved_dependencies = [
-                    dependency_id
-                    for dependency_id in dependencies
-                    if outcomes[dependency_id].status != TaskStatus.SOLVED
-                ]
-                if unsolved_dependencies:
-                    reason = f"依赖的子任务未解决：{', '.join(unsolved_dependencies)}。"
+                if outcome.status != "solved":
+                    reason = f"依赖的子任务未解决：{task_id}。"
                     block_child_task(dependent_child_task, reason)
+                    continue
+                dependencies_by_task[dependent_id].remove(task_id)
+                if dependencies_by_task[dependent_id]:
                     continue
                 start_child_task(dependent_child_task)
 

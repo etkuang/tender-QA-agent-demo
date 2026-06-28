@@ -640,3 +640,98 @@ Proposed changes:
    - Continue requiring final synthesis to explain solved, unsolved, and blocked child tasks.
 
 V0.63 release
+
+12. Simplify task and workflow status contracts:
+   - Remove the small TaskStatus enum.
+   - Use Literal["solved", "unsolved"] for WorkflowResult.status.
+   - Use Literal["solved", "unsolved", "blocked"] for ChildTaskOutcome.status.
+
+13. Make child-task DAG scheduling fail fast:
+   - Remove delayed unsolved-dependency tracking.
+   - Block pending dependents immediately when a prerequisite is not solved.
+   - Consume dependency edges only for solved prerequisites.
+
+14. Harden child-task dependency validation:
+   - Reject duplicated depends_on entries in ChildTask validation.
+   - Keep duplicate task-id, missing dependency, and cycle validation in TaskGraph.
+
+15. Tighten child workflow execution scope:
+   - Remove original_question from child workflow dispatch.
+   - Keep policy child answers scoped to the self-contained child task.
+   - Store unclear child tasks with answer=None and unresolved_reason set.
+
+16. Pass freshness requirements through all child workflows:
+   - Pass task.requires_fresh_data to general, policy, and data-domain workflows.
+   - Let policy freshness trigger a one-shot official internet check.
+   - Let data-domain freshness force website retrieval even when the plan prefers SQL.
+
+17. Update policy workflow status and prompt behavior:
+   - Remove original_question from policy graph state and policy answer input.
+   - Track requires_fresh_data and internet_searched in policy graph state.
+   - Return workflow-level "unsolved" literals for no-evidence and insufficient-evidence outcomes.
+
+18. Add optional internet support to the general workflow:
+   - Make GeneralWorkflow return WorkflowResult.
+   - Use optional general internet search for fresh general questions.
+   - Ground fresh general answers in web evidence and citations, or return an unsolved source-unavailable result.
+
+19. Wire general internet dependency injection:
+   - Add general_internet_client to build_application.
+   - Construct GeneralWorkflow with settings, EvidenceAdapter, and the optional general internet client.
+
+20. Add an explicit dependency-outcome contract:
+   - Add DependencyOutcome with task_id, question, and answer.
+   - Use it as the narrow payload for solved prerequisite conclusions.
+   - Keep dependency context separate from full child outcome state.
+
+21. Move dependency extraction into the child-task scheduler:
+   - Build direct dependency outcomes inside start_child_task.
+   - Stop passing all child outcomes and task_map into ChildWorkflowRunner.
+   - Keep the child workflow runner focused on category dispatch.
+
+22. Stop merging dependency conclusions into child questions:
+   - Delete ChildWorkflowRunner._task_question.
+   - Pass task.question unchanged to each downstream workflow.
+   - Pass dependency outcomes as a separate workflow argument.
+
+23. Add shared dependency-outcome formatting:
+   - Add format_dependency_outcomes in the common workflow helpers.
+   - Use the same formatted dependency context across general, policy, and data-domain prompts.
+   - Preserve task_id in the formatted context for traceability.
+
+24. Extend the general workflow boundary:
+   - Accept dependency outcomes as a separate input.
+   - Add the same optional progress callback shape used by policy and data workflows.
+   - Include dependency outcomes in GENERAL_PROMPT without altering the child question.
+
+25. Stream general internet progress:
+   - Emit started, skipped, failed, and completed general_internet ToolEvents.
+   - Add StreamEventFormatter.progress_content handling for general_internet.
+   - Preserve returned tool_events for final workflow accounting.
+
+26. Extend policy parsing, assessment, and synthesis with dependency context:
+   - Pass dependency outcomes through PolicyGraphState.
+   - Include dependency outcomes in policy query parsing and evidence assessment.
+   - Include dependency outcomes in policy answer synthesis as a separate prompt field.
+
+27. Extend data-domain planning and synthesis with dependency context:
+   - Pass dependency outcomes into ResearchPlanner.plan.
+   - Include dependency outcomes in data-domain research planning.
+   - Include dependency outcomes in data-domain answer synthesis.
+
+28. Update downstream workflow signatures consistently:
+   - Update GeneralWorkflow.run, PolicyGraphWorkflow.run, and DataDomainWorkflow.run.
+   - Thread dependency outcomes through internal helper calls.
+   - Keep secondary data-domain categories and freshness flags as explicit arguments.
+
+29. Fix unresolved child-task answer semantics:
+   - Return answer=None when ChildWorkflowRunner catches AgentError.
+   - Store the user-facing failure message only in unresolved_reason.
+   - Convert unsolved WorkflowResult answers to None in ChildTaskOutcome.
+
+30. Fix the undefined TaskStatus reference:
+   - Replace TaskStatus.SOLVED with the active "solved" literal.
+   - Keep scheduler behavior aligned with the current Literal status schema.
+   - Avoid a runtime NameError after a child task completes.
+
+V0.64 release

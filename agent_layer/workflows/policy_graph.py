@@ -20,11 +20,11 @@ from agent_layer.retrieval.adapter import EvidenceAdapter
 from agent_layer.retrieval.pipeline import RetrievalPipeline
 from agent_layer.schemas import (
     Category,
+    DependencyOutcome,
     Evidence,
     PolicyQuery,
     RetrievalAssessment,
     SourceTier,
-    TaskStatus,
     ToolEvent,
     WebsiteQuery,
     WorkflowResult,
@@ -33,6 +33,7 @@ from agent_layer.workflows.common import (
     build_citations,
     citations_are_valid,
     ensure_source_section,
+    format_dependency_outcomes,
     format_evidence,
     rank_evidence,
 )
@@ -47,9 +48,10 @@ RouteName = Literal["retrieve", "policy_internet", "assess", "synthesize"]
 
 class PolicyGraphState(TypedDict, total=False):
     run_id: str
-    original_question: str
     question: str
     history: str
+    dependency_outcomes: list[DependencyOutcome]
+    requires_fresh_data: bool
     policy_query: PolicyQuery
     evidence: list[Evidence]
     assessment: RetrievalAssessment
@@ -60,6 +62,7 @@ class PolicyGraphState(TypedDict, total=False):
     tool_events: list[ToolEvent]
     result: WorkflowResult
     internet_evidence_count: int
+    internet_searched: bool
 
 
 class PolicyGraphWorkflow:
@@ -117,9 +120,10 @@ class PolicyGraphWorkflow:
 
     async def run(
         self,
-        original_question: str,
         question: str,
         history: str,
+        dependency_outcomes: list[DependencyOutcome],
+        requires_fresh_data: bool,
         progress_callback: ProgressCallback | None = None,
     ) -> WorkflowResult:
         run_id = uuid.uuid4().hex
@@ -127,9 +131,10 @@ class PolicyGraphWorkflow:
             self.progress_callbacks[run_id] = progress_callback
         initial_state = PolicyGraphState(
             run_id=run_id,
-            original_question=original_question,
             question=question,
             history=history,
+            dependency_outcomes=dependency_outcomes,
+            requires_fresh_data=requires_fresh_data,
             evidence=[],
             retrieval_queries=[question],
             seen_queries=[question],
@@ -137,6 +142,7 @@ class PolicyGraphWorkflow:
             model_calls=0,
             tool_events=[],
             internet_evidence_count=0,
+            internet_searched=False,
         )
         try:
             state = await self.graph.ainvoke(initial_state, self.checkpoint_runtime.config(run_id))
@@ -161,7 +167,11 @@ class PolicyGraphWorkflow:
             summary="Parsing policy query conditions.",
         )
         await self._emit(state["run_id"], start_event)
-        policy_query = await self.query_parser.parse(state["question"], state["history"])
+        policy_query = await self.query_parser.parse(
+            state["question"],
+            state["history"],
+            state["dependency_outcomes"],
+        )
         event = ToolEvent(
             stage="policy_parse",
             status="completed",
@@ -214,6 +224,7 @@ class PolicyGraphWorkflow:
         await self._emit(state["run_id"], start_event)
         assessment = await self.assessment.assess(
             state["question"],
+            state["dependency_outcomes"],
             format_evidence(
                 evidence,
                 self.settings.evidence_chunk_chars,
@@ -248,11 +259,17 @@ class PolicyGraphWorkflow:
 
     def _route_after_assessment(self, state: PolicyGraphState) -> RouteName:
         assessment = state.get("assessment")
-        if assessment is None or assessment.sufficient:
+        if assessment is None:
+            return "synthesize"
+        internet_needed = state.get("requires_fresh_data", False) or assessment.need_official_web_search
+        internet_available = not state.get("internet_searched", False)
+        if assessment.sufficient:
+            if internet_needed and internet_available:
+                return "policy_internet"
             return "synthesize"
         if state.get("retrieval_queries") and state.get("round_index", 0) < self.settings.max_retrieval_rounds:
             return "retrieve"
-        if assessment.need_official_web_search:
+        if internet_needed and internet_available:
             return "policy_internet"
         return "synthesize"
 
@@ -268,6 +285,7 @@ class PolicyGraphWorkflow:
         return {
             "evidence": evidence,
             "internet_evidence_count": len(internet_evidence),
+            "internet_searched": True,
             "tool_events": [*state.get("tool_events", []), *internet_events],
         }
 
@@ -284,7 +302,7 @@ class PolicyGraphWorkflow:
                 tool_events=state.get("tool_events", []),
                 model_calls=state.get("model_calls", 0),
                 run_id=state["run_id"],
-                status=TaskStatus.UNSOLVED,
+                status="unsolved",
                 unresolved_reason=NO_RESULTS_RESPONSE,
             )
             return {"result": result}
@@ -308,7 +326,7 @@ class PolicyGraphWorkflow:
                 tool_events=state.get("tool_events", []),
                 model_calls=state.get("model_calls", 0),
                 run_id=state["run_id"],
-                status=TaskStatus.UNSOLVED,
+                status="unsolved",
                 unresolved_reason=answer,
             )
             return {"result": result}
@@ -321,9 +339,9 @@ class PolicyGraphWorkflow:
         )
         await self._emit(state["run_id"], start_event)
         answer_input = {
-            "original_question": state["original_question"],
             "question": state["question"],
             "history": state["history"],
+            "dependency_outcomes": format_dependency_outcomes(state["dependency_outcomes"]),
             "assessment": assessment.model_dump_json(),
             "evidence": evidence_text,
             "citation_feedback": "",

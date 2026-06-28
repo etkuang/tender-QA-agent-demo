@@ -28,6 +28,7 @@ async def build_application(
     sql_gateway: SQLGateway | None = None,
     website_clients: dict[str, WebsiteSearchClient] | None = None,
     policy_internet_client: WebsiteSearchClient | None = None,
+    general_internet_client: WebsiteSearchClient | None = None,
 ) -> TenderQAApplication:
     model_factory = ModelFactory(runtime_settings)
     structured_model = model_factory.build_chat_model(temperature=0.0, max_tokens=1000)
@@ -43,7 +44,12 @@ async def build_application(
 
     decomposer = QuestionDecomposer(structured_model, runtime_settings)
     quick_classifier = QuickResponseClassifier(structured_model, runtime_settings)
-    general_workflow = GeneralWorkflow(answer_model)
+    general_workflow = GeneralWorkflow(
+        answer_model,
+        runtime_settings,
+        evidence_adapter,
+        general_internet_client,
+    )
     composite_workflow = CompositeAnswerWorkflow(answer_model, runtime_settings)
     policy_assessment = PolicyAssessmentChain(structured_model, runtime_settings)
     policy_query_parser = PolicyQueryParser(structured_model, runtime_settings)

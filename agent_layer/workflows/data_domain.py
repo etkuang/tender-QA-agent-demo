@@ -25,10 +25,10 @@ from agent_layer.errors import (
 from agent_layer.retrieval.adapter import EvidenceAdapter
 from agent_layer.schemas import (
     Category,
+    DependencyOutcome,
     Evidence,
     ResearchPlan,
     ResearchTask,
-    TaskStatus,
     ToolEvent,
     WebsiteQuery,
     WorkflowResult,
@@ -40,6 +40,7 @@ from agent_layer.workflows.common import (
     build_citations,
     citations_are_valid,
     ensure_source_section,
+    format_dependency_outcomes,
     format_evidence,
     rank_evidence,
 )
@@ -100,7 +101,8 @@ ResearchTask 字段说明：
         (
             "human",
             "主领域：{display_name}\n\n可用领域配置：\n{profiles}\n\nchild task：\n{question}\n\n"
-            "历史消息：\n{history}\n\n是否要求新鲜数据：{requires_fresh_data}",
+            "依赖子任务结论：\n{dependency_outcomes}\n\n历史消息：\n{history}\n\n"
+            "是否要求新鲜数据：{requires_fresh_data}",
         ),
     ]
 )
@@ -122,7 +124,8 @@ DOMAIN_ANSWER_PROMPT = ChatPromptTemplate.from_messages(
         ),
         (
             "human",
-            "主领域要求：\n{profile}\n\nchild task：\n{question}\n\n历史消息：\n{history}\n\n"
+            "主领域要求：\n{profile}\n\nchild task：\n{question}\n\n"
+            "依赖子任务结论：\n{dependency_outcomes}\n\n历史消息：\n{history}\n\n"
             "研究计划：\n{plan}\n\n证据：\n{evidence}\n\n引用修正要求：\n{citation_feedback}",
         ),
     ]
@@ -186,6 +189,7 @@ class ResearchPlanner:
         self,
         question: str,
         history: str,
+        dependency_outcomes: list[DependencyOutcome],
         primary_profile: DomainProfile,
         allowed_profiles: list[DomainProfile],
         requires_fresh_data: bool,
@@ -198,6 +202,7 @@ class ResearchPlanner:
                     "display_name": primary_profile.display_name,
                     "profiles": _format_domain_profiles(allowed_profiles),
                     "question": question,
+                    "dependency_outcomes": format_dependency_outcomes(dependency_outcomes),
                     "history": history,
                     "requires_fresh_data": requires_fresh_data,
                 }
@@ -248,6 +253,7 @@ class DataDomainWorkflow:
         self,
         question: str,
         history: str,
+        dependency_outcomes: list[DependencyOutcome],
         secondary_categories: list[Category],
         requires_fresh_data: bool,
         progress_callback: ProgressCallback | None = None,
@@ -271,6 +277,7 @@ class DataDomainWorkflow:
         plan = await self.planner.plan(
             question,
             history,
+            dependency_outcomes,
             self.profile,
             allowed_profiles,
             requires_fresh_data,
@@ -299,6 +306,7 @@ class DataDomainWorkflow:
             plan,
             allowed_categories,
             run_id,
+            requires_fresh_data,
             progress_callback,
         )
         events.extend(execution_events)
@@ -311,7 +319,7 @@ class DataDomainWorkflow:
                     tool_events=events,
                     model_calls=1,
                     run_id=run_id,
-                    status=TaskStatus.UNSOLVED,
+                    status="unsolved",
                     unresolved_reason=reason,
                 )
             return WorkflowResult(
@@ -319,7 +327,7 @@ class DataDomainWorkflow:
                 tool_events=events,
                 model_calls=1,
                 run_id=run_id,
-                status=TaskStatus.UNSOLVED,
+                status="unsolved",
                 unresolved_reason=SOURCE_UNAVAILABLE_RESPONSE,
             )
 
@@ -336,6 +344,7 @@ class DataDomainWorkflow:
         answer_input = {
             "profile": _format_domain_profiles([self.profile]),
             "question": question,
+            "dependency_outcomes": format_dependency_outcomes(dependency_outcomes),
             "history": history,
             "plan": _format_research_plan(plan),
             "evidence": format_evidence(
@@ -377,6 +386,7 @@ class DataDomainWorkflow:
         plan: ResearchPlan,
         allowed_categories: list[Category],
         run_id: str,
+        requires_fresh_data: bool,
         progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
         pending = {task.task_id: task for task in plan.tasks}
@@ -394,6 +404,7 @@ class DataDomainWorkflow:
                         task,
                         plan,
                         allowed_categories,
+                        requires_fresh_data,
                         progress_callback,
                     )
                     for task in ready
@@ -413,6 +424,7 @@ class DataDomainWorkflow:
         task: ResearchTask,
         plan: ResearchPlan,
         allowed_categories: list[Category],
+        requires_fresh_data: bool,
         progress_callback: ProgressCallback | None,
     ) -> tuple[list[Evidence], list[ToolEvent], list[AgentError]]:
         category = task.domain or self.profile.category
@@ -431,7 +443,7 @@ class DataDomainWorkflow:
         jobs = []
         if task.preferred_source in {"sql", "both"}:
             jobs.append(self._execute_sql(task, profile, progress_callback))
-        if task.preferred_source in {"website", "both"}:
+        if requires_fresh_data or task.preferred_source in {"website", "both"}:
             jobs.append(self._execute_web(task, plan, profile, progress_callback))
         if not jobs:
             event = ToolEvent(stage=task.task_id, status="skipped", summary="该数据查询步骤没有可用的数据来源。")
