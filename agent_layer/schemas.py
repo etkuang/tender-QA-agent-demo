@@ -2,7 +2,7 @@
 
 from datetime import date, datetime, timezone
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, Field, RootModel, model_validator
 
@@ -220,12 +220,9 @@ class WorkflowResult(BaseModel):
 
 class ChildTaskOutcome(BaseModel):
     task_id: str
-    category: Category
-    question: str
-    depends_on: list[str] = Field(default_factory=list)
     status: TaskStatus
-    answer: str = ""
-    reason: str | None = None
+    answer: str | None = None
+    unresolved_reason: str | None = None
     evidence: list[Evidence] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     tool_events: list[ToolEvent] = Field(default_factory=list)

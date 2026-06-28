@@ -3,15 +3,15 @@
 from langchain_core.language_models import BaseChatModel
 
 from common.logger import get_logger
-from agent_layer.classification.prompts import QUESTION_DECOMPOSITION_PROMPT
+from agent_layer.question_decomposition.prompts import QUESTION_DECOMPOSITION_PROMPT
 from agent_layer.config import Settings
 from agent_layer.errors import DecompositionError, raise_model_error
 from agent_layer.schemas import ChildTask, ChildTaskList
 
-logger = get_logger("agent.classification")
+logger = get_logger("agent.decomposition")
 
 
-class QuestionClassifier:
+class QuestionDecomposer:
     def __init__(self, model: BaseChatModel, settings: Settings):
         self.settings = settings
         structured_model = model.with_structured_output(
@@ -20,7 +20,7 @@ class QuestionClassifier:
         )
         self.chain = QUESTION_DECOMPOSITION_PROMPT | structured_model
 
-    async def classify(self, question: str, history: str = "") -> list[ChildTask]:
+    async def decompose(self, question: str, history: str = "") -> list[ChildTask]:
         try:
             result = await self.chain.with_retry(
                 stop_after_attempt=self.settings.structured_output_retries + 1,
@@ -31,6 +31,6 @@ class QuestionClassifier:
                 }
             )
         except Exception as exc:
-            logger.exception("structured question understanding failed")
+            logger.exception("structured question decomposition failed")
             raise_model_error(exc, DecompositionError)
         return result.root

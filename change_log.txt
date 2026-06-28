@@ -577,3 +577,66 @@ Proposed changes:
    - Prevent two concurrent Agent requests from invoking the same local model runtime at the same time by default.
 
 V0.62 release
+
+Follow-up proposal update on 2026-06-28:
+
+Proposed changes:
+1. Move child-task graph validation into TaskGraph:
+   - Validate duplicate task IDs before building task_map.
+   - Reject missing dependencies during graph construction.
+   - Detect cyclic dependencies with a concise topological pass and expose dependents for runtime scheduling.
+
+2. Replace child-task execution with dynamic DAG scheduling:
+   - Start dependency-free tasks immediately.
+   - Use asyncio.wait(..., FIRST_COMPLETED) so dependents can start as soon as their own prerequisites finish.
+   - Pass progress_queue.put directly and receive it as enqueue_progress_event inside the workflow path.
+
+3. Simplify child-task outcome data:
+   - Remove category, question, and depends_on from ChildTaskOutcome.
+   - Resolve task metadata from ChildTask via task_id when building dependent context and final synthesis input.
+   - Remove _blocked_outcome and represent blocked tasks with answer=None plus a reason.
+
+4. Clarify child-task result contracts:
+   - Rename ChildTaskOutcome.reason to unresolved_reason.
+   - Keep WorkflowResult separate from ChildTaskOutcome.
+   - Keep WorkflowResult.run_id for workflow run identity and policy checkpoint lookup.
+   - Import Literal in agent_layer/schemas.py because active schema fields still use it.
+
+5. Split TenderQAApplication responsibilities:
+   - Extract StreamEventFormatter for route, reasoning, progress, source, and answer chunk formatting.
+   - Extract ChildWorkflowRunner for one-child-task workflow dispatch.
+   - Extract ChildTaskExecutor for dependency scheduling and final composite synthesis.
+   - Keep TenderQAApplication as the request-lifecycle facade.
+
+6. Make the child-task boundary return task-aware outcomes:
+   - Let ChildWorkflowRunner return ChildTaskOutcome directly.
+   - Keep policy, data-domain, general, and composite workflows returning WorkflowResult where appropriate.
+   - Remove the separate _outcome_from_result conversion helper.
+
+7. Improve child-task execution naming and synthesis input assembly:
+   - Distinguish ChildTask domain objects from asyncio.Task execution handles.
+   - Use clearer names such as running_executions, start_child_task, and block_child_task.
+   - Build final child_results from ChildTask metadata plus ChildTaskOutcome data.
+
+8. Rename question-understanding API to decomposition:
+   - Rename QuestionClassifier to QuestionDecomposer.
+   - Rename classify() to decompose().
+   - Rename the injected ApplicationDependencies field from classifier to decomposer.
+
+9. Move decomposition modules out of the classification package:
+   - Move agent_layer/classification/prompts.py to agent_layer/question_decomposition/prompts.py.
+   - Move agent_layer/classification/chain.py to agent_layer/question_decomposition/decomposer.py.
+   - Update application, bootstrap, and evaluation imports to the new module path.
+
+10. Rename decomposition evaluation files and models:
+   - Move agent_layer/evaluation/classification.py to agent_layer/evaluation/decomposition.py.
+   - Rename ClassificationSample to DecompositionSample.
+   - Rename ClassificationEvaluation to DecompositionEvaluation.
+   - Rename evaluate_classification to evaluate_decomposition.
+
+11. Preserve final synthesis behavior after the refactor:
+   - Keep ChildTaskOutcome focused on outcome state only.
+   - Keep task category, question, and dependency metadata sourced from ChildTask.
+   - Continue requiring final synthesis to explain solved, unsolved, and blocked child tasks.
+
+V0.63 release

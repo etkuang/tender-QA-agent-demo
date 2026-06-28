@@ -2,7 +2,7 @@
 
 from agent_layer.adapters.base import WebsiteSearchClient
 from agent_layer.app import ApplicationDependencies, TenderQAApplication
-from agent_layer.classification.chain import QuestionClassifier
+from agent_layer.question_decomposition.chain import QuestionDecomposer
 from agent_layer.checkpoint import LangGraphCheckpointRuntime
 from agent_layer.conversation.quick_classifier import QuickResponseClassifier
 from agent_layer.config import Settings, settings
@@ -41,7 +41,7 @@ async def build_application(
         runtime_settings,
     )
 
-    classifier = QuestionClassifier(structured_model, runtime_settings)
+    decomposer = QuestionDecomposer(structured_model, runtime_settings)
     quick_classifier = QuickResponseClassifier(structured_model, runtime_settings)
     general_workflow = GeneralWorkflow(answer_model)
     composite_workflow = CompositeAnswerWorkflow(answer_model, runtime_settings)
@@ -87,7 +87,7 @@ async def build_application(
     dependencies = ApplicationDependencies(
         settings=runtime_settings,
         quick_classifier=quick_classifier,
-        classifier=classifier,
+        decomposer=decomposer,
         general_workflow=general_workflow,
         composite_workflow=composite_workflow,
         policy_workflow=policy_workflow,

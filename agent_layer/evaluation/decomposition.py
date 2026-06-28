@@ -2,34 +2,34 @@
 
 from pydantic import BaseModel, Field
 
-from agent_layer.classification.chain import QuestionClassifier
+from agent_layer.question_decomposition.chain import QuestionDecomposer
 from agent_layer.schemas import Category
 
 
-class ClassificationSample(BaseModel):
+class DecompositionSample(BaseModel):
     sample_id: str
     question: str
     expected_categories: list[Category] = Field(default_factory=list)
     history: str = ""
 
 
-class ClassificationEvaluation(BaseModel):
+class DecompositionEvaluation(BaseModel):
     total: int
     exact_match_accuracy: float
     macro_f1: float
     failures: list[str]
 
 
-async def evaluate_classification(
-    classifier: QuestionClassifier,
-    samples: list[ClassificationSample],
-) -> ClassificationEvaluation:
+async def evaluate_decomposition(
+    decomposer: QuestionDecomposer,
+    samples: list[DecompositionSample],
+) -> DecompositionEvaluation:
     labels = list(Category)
     counts = {label: {"true_positive": 0, "false_positive": 0, "false_negative": 0} for label in labels}
     failures = []
     exact_matches = 0
     for sample in samples:
-        tasks = await classifier.classify(sample.question, sample.history)
+        tasks = await decomposer.decompose(sample.question, sample.history)
         expected = set(sample.expected_categories)
         predicted = {task.category for task in tasks}
         if predicted == expected:
@@ -52,7 +52,7 @@ async def evaluate_classification(
         recall = true_positive / (true_positive + false_negative) if true_positive + false_negative else 0
         f1_scores.append(2 * precision * recall / (precision + recall) if precision + recall else 0)
     total = len(samples)
-    return ClassificationEvaluation(
+    return DecompositionEvaluation(
         total=total,
         exact_match_accuracy=exact_matches / total if total else 0,
         macro_f1=sum(f1_scores) / len(f1_scores),
