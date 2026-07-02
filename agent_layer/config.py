@@ -40,6 +40,11 @@ class Settings(BaseSettings):
 
     sql_statement_timeout_seconds: float = 10.0
     sql_max_rows: int = 200  # Max rows returned by a read-only SQL query.
+    sql_dialect: str = "sqlite"
+    sql_repair_attempts: int = 2
+    sql_context_table_limit: int = 4
+    sql_context_example_limit: int = 3
+    sql_show_generated_sql: bool = True
 
     model_config = SettingsConfigDict(env_file=(PROJECT_ROOT / ".env").as_posix())
 

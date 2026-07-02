@@ -43,7 +43,7 @@ category 只能取以下值之一：
 - unclear：用户意图、业务对象或业务域不足以判断，需要补充信息。
 
 拆解规则：
-- 如果用户最新问题包含多个业务目标，拆成多个 child task。
+- 如果用户最新问题包含多个业务目标，拆成多个 child task；同一类 child task可以有多个，取决于包含多少个主体。
 - 如果后续 child task 需要前序 child task 的实体、结论或证据，在 depends_on 中填写前序 task_id。
 - depends_on 只能引用已经生成的前序 task_id。
 - 历史助手回答只用于理解对话语境，不作为事实依据补造用户没有确认的信息。""",

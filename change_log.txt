@@ -735,3 +735,55 @@ V0.63 release
    - Avoid a runtime NameError after a child task completes.
 
 V0.64 release
+
+Follow-up proposal update on 2026-07-01:
+
+Proposed changes:
+1. Simplify child workflow dependency wiring:
+   - Replace separate general_workflow, policy_workflow, and data_workflows dependency fields with one category-keyed child_task_workflows map.
+   - Dispatch executable child tasks through the workflow map while keeping composite_workflow separate.
+
+2. Remove legacy category and policy maintenance code:
+   - Remove the obsolete secondary_categories path from data-domain workflows now that decomposition assigns one category per child task.
+   - Clean stale imports from agent_layer/workflows/policy.py after policy execution moved into PolicyGraphWorkflow.
+
+Follow-up proposal update on 2026-07-02:
+
+Proposed changes:
+1. Introduce an independent data-domain child workflow package:
+   - Add agent_layer/data_domain/ as the owner of data-domain workflow, prompts, chains, schemas, context retrieval, SQL, analysis, and website supplement logic.
+   - Keep data-domain-specific schemas local to the child workflow package.
+
+2. Replace the draft planner-first data-domain workflow:
+   - Remove the old ResearchPlanner and ResearchPlan execution model.
+   - Use a database-first flow: intent classification, context retrieval, clarification, SQL generation, validation, execution, bounded repair, analysis, and synthesis.
+
+3. Add a data-domain semantic context layer:
+   - Model tables, columns, relationships, business glossary terms, metric definitions, approved SQL examples, and access policies.
+   - Retrieve relevant context before SQL generation instead of relying on schema alone.
+
+4. Move SQL ownership into the data-domain package:
+   - Add data-domain SQL gateway, validator, execution request, validation result, and audit contracts under agent_layer/data_domain/.
+   - Delete the old top-level agent_layer/sql package after migration.
+
+5. Treat generated SQL as untrusted code:
+   - Validate SQL with SQLGlot and policy checks before execution.
+   - Enforce read-only statements, approved tables and columns, sensitive-column restrictions, no SELECT *, and bounded LIMIT behavior.
+
+6. Add bounded SQL repair:
+   - Feed validation or execution errors back into a repair chain for a limited number of attempts.
+   - Stop without returning unvalidated data when SQL cannot be safely repaired.
+
+7. Keep website retrieval secondary:
+   - Use configured website adapters only for freshness, public corroboration, source URLs, or database coverage gaps.
+   - Keep SQL as the primary evidence source for data-domain child tasks.
+
+8. Wire the new workflow directly into the main child-task dispatcher:
+   - Construct DataDomainWorkflow objects in bootstrap.py and insert them into child_task_workflows.
+   - Let ChildWorkflowRunner.run call the new workflow directly through the existing category-keyed workflow map.
+
+9. Remove old data-domain artifacts:
+   - Delete the old data-domain workflow module, old SQL evaluation helper, old DatasetAnalyzer, and stale shared ResearchTask, ResearchPlan, and AnalysisSummary schemas.
+   - Remove the old SQL evidence adapter helper now that SQL evidence is built inside the new data-domain package.
+
+V0.65 release

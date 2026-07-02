@@ -1,10 +1,9 @@
 # coding: utf-8
 
 import hashlib
-import json
 from datetime import datetime
 
-from agent_layer.schemas import AnalysisSummary, Category, DataResult, Evidence, SearchResult, SourceTier, SourceType
+from agent_layer.schemas import Category, Evidence, SearchResult, SourceTier, SourceType
 
 
 class EvidenceAdapter:
@@ -61,47 +60,6 @@ class EvidenceAdapter:
                 "source_tier": result.source_tier.value,
                 "content_hash": result.content_hash,
                 **result.structured_data,
-            },
-        )
-
-    def from_data_result(
-        self,
-        result: DataResult,
-        category: Category,
-        title: str,
-        analysis: AnalysisSummary,
-    ) -> Evidence:
-        content = json.dumps(
-            {
-                "columns": result.columns,
-                "rows": result.rows,
-                "row_count": result.row_count,
-                "truncated": result.truncated,
-                "units": result.units,
-                "filters": result.filters,
-                "data_as_of": result.data_as_of.isoformat() if result.data_as_of else None,
-                "query_id": result.query_id,
-                "analysis": analysis.model_dump(mode="json"),
-            },
-            ensure_ascii=False,
-        )
-        return Evidence(
-            evidence_id=self._stable_id(category.value, result.query_id, content),
-            domain=category,
-            source_type=SourceType.SQL,
-            title=title,
-            content=content,
-            document_id=result.query_id,
-            published_at=result.data_as_of,
-            authority_level=3,
-            freshness_level=2 if result.data_as_of else 1,
-            metadata={
-                "query_id": result.query_id,
-                "row_count": result.row_count,
-                "truncated": result.truncated,
-                "units": result.units,
-                "filters": result.filters,
-                "analysis": analysis.model_dump(mode="json"),
             },
         )
 

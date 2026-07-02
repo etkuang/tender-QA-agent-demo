@@ -6,6 +6,19 @@ from agent_layer.question_decomposition.chain import QuestionDecomposer
 from agent_layer.checkpoint import LangGraphCheckpointRuntime
 from agent_layer.conversation.quick_classifier import QuickResponseClassifier
 from agent_layer.config import Settings, settings
+from agent_layer.data_domain.analysis import DataResultAnalyzer
+from agent_layer.data_domain.chains import (
+    DataAnswerChain,
+    DataIntentClassifier,
+    DataSQLGenerator,
+    DataSQLRepairChain,
+)
+from agent_layer.data_domain.context.catalog import build_default_data_context_catalog
+from agent_layer.data_domain.context.retriever import DataContextRetriever
+from agent_layer.data_domain.sql.gateway import SQLGateway
+from agent_layer.data_domain.sql.validator import SQLPolicyValidator
+from agent_layer.data_domain.web import WebsiteSupplementer
+from agent_layer.data_domain.workflow import DataDomainWorkflow
 from agent_layer.domains.company import build_company_profile
 from agent_layer.domains.price import build_price_profile
 from agent_layer.domains.product import build_product_profile
@@ -15,9 +28,7 @@ from agent_layer.models import ModelFactory
 from agent_layer.retrieval.adapter import EvidenceAdapter
 from agent_layer.retrieval.client import KnowledgeBaseClient
 from agent_layer.retrieval.pipeline import RetrievalPipeline
-from agent_layer.sql.gateway import SQLGateway
-from agent_layer.workflows.analysis import DatasetAnalyzer
-from agent_layer.workflows.data_domain import DataDomainWorkflow, ResearchPlanner
+from agent_layer.schemas import Category
 from agent_layer.workflows.general import CompositeAnswerWorkflow, GeneralWorkflow
 from agent_layer.workflows.policy import PolicyAssessmentChain, PolicyQueryParser
 from agent_layer.workflows.policy_graph import PolicyGraphWorkflow
@@ -64,7 +75,6 @@ async def build_application(
         policy_internet_client,
     )
 
-    planner = ResearchPlanner(structured_model, runtime_settings)
     clients = website_clients or {}
     profiles = [
         build_tender_profile(runtime_settings),
@@ -74,30 +84,44 @@ async def build_application(
         build_product_profile(runtime_settings),
     ]
     profile_map = {profile.category: profile for profile in profiles}
-    analyzer = DatasetAnalyzer()
+    data_context_catalog = build_default_data_context_catalog()
+    data_context_retriever = DataContextRetriever(data_context_catalog, runtime_settings)
+    data_intent_classifier = DataIntentClassifier(structured_model, runtime_settings)
+    data_sql_generator = DataSQLGenerator(structured_model, runtime_settings)
+    data_sql_repair_chain = DataSQLRepairChain(structured_model, runtime_settings)
+    data_sql_validator = SQLPolicyValidator(runtime_settings.sql_dialect, runtime_settings.sql_max_rows)
+    data_answer_chain = DataAnswerChain(answer_model, runtime_settings)
+    data_web_supplementer = WebsiteSupplementer(evidence_adapter, clients, runtime_settings)
+    data_analyzer = DataResultAnalyzer()
     data_workflows = {
         profile.category: DataDomainWorkflow(
             profile,
             profile_map,
-            planner,
-            answer_model,
-            evidence_adapter,
-            runtime_settings,
+            data_context_retriever,
+            data_intent_classifier,
+            data_sql_generator,
+            data_sql_repair_chain,
+            data_sql_validator,
             sql_gateway,
-            clients,
-            analyzer,
+            data_answer_chain,
+            data_web_supplementer,
+            data_analyzer,
+            runtime_settings,
         )
         for profile in profiles
+    }
+    child_task_workflows = {
+        Category.OTHER: general_workflow,
+        Category.POLICY: policy_workflow,
+        **data_workflows,
     }
 
     dependencies = ApplicationDependencies(
         settings=runtime_settings,
         quick_classifier=quick_classifier,
         decomposer=decomposer,
-        general_workflow=general_workflow,
+        child_task_workflows=child_task_workflows,
         composite_workflow=composite_workflow,
-        policy_workflow=policy_workflow,
-        data_workflows=data_workflows,
         checkpoint_runtime=checkpoint_runtime,
     )
     return TenderQAApplication(dependencies)

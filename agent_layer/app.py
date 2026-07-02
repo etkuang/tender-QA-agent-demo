@@ -23,7 +23,7 @@ from agent_layer.schemas import (
     ToolEvent,
     WorkflowResult,
 )
-from agent_layer.workflows.data_domain import DataDomainWorkflow
+from agent_layer.data_domain.workflow import DataDomainWorkflow
 from agent_layer.workflows.general import CompositeAnswerWorkflow, GeneralWorkflow
 from agent_layer.workflows.policy_graph import PolicyGraphWorkflow
 
@@ -35,10 +35,8 @@ class ApplicationDependencies:
     settings: Settings
     quick_classifier: QuickResponseClassifier
     decomposer: QuestionDecomposer
-    general_workflow: GeneralWorkflow
+    child_task_workflows: dict[Category, GeneralWorkflow | PolicyGraphWorkflow | DataDomainWorkflow]
     composite_workflow: CompositeAnswerWorkflow
-    policy_workflow: PolicyGraphWorkflow
-    data_workflows: dict[Category, DataDomainWorkflow]
     checkpoint_runtime: LangGraphCheckpointRuntime
 
 
@@ -305,32 +303,14 @@ class ChildWorkflowRunner:
             )
 
         try:
-            if task.category == Category.OTHER:
-                result = await self.dependencies.general_workflow.run(
-                    task.question,
-                    history,
-                    dependency_outcomes,
-                    task.requires_fresh_data,
-                    enqueue_progress_event,
-                )
-            elif task.category == Category.POLICY:
-                result = await self.dependencies.policy_workflow.run(
-                    task.question,
-                    history,
-                    dependency_outcomes,
-                    task.requires_fresh_data,
-                    enqueue_progress_event,
-                )
-            else:
-                workflow = self.dependencies.data_workflows[task.category]
-                result = await workflow.run(
-                    task.question,
-                    history,
-                    dependency_outcomes,
-                    [],
-                    task.requires_fresh_data,
-                    enqueue_progress_event,
-                )
+            workflow = self.dependencies.child_task_workflows[task.category]
+            result = await workflow.run(
+                task.question,
+                history,
+                dependency_outcomes,
+                task.requires_fresh_data,
+                enqueue_progress_event,
+            )
         except AgentError as exc:
             return ChildTaskOutcome(
                 task_id=task.task_id,

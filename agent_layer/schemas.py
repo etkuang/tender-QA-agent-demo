@@ -137,24 +137,6 @@ class TimeRange(BaseModel):
     end: date | None = None
 
 
-class ResearchTask(BaseModel):
-    task_id: str
-    goal: str
-    preferred_source: Literal["sql", "website", "both"]
-    domain: Category | None = None
-    depends_on: list[str] = Field(default_factory=list)
-
-
-class ResearchPlan(BaseModel):
-    subject: str
-    keywords: list[str] = Field(default_factory=list)
-    time_range: TimeRange | None = None
-    region: str | None = None
-    required_fields: list[str] = Field(default_factory=list)
-    metrics: list[str] = Field(default_factory=list)
-    tasks: list[ResearchTask] = Field(default_factory=list)
-
-
 class DataResult(BaseModel):
     columns: list[str]
     rows: list[dict[str, Any]]
@@ -164,15 +146,6 @@ class DataResult(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     data_as_of: datetime | None = None
     query_id: str
-
-
-class AnalysisSummary(BaseModel):
-    query_id: str
-    sample_size: int
-    filters: dict[str, Any] = Field(default_factory=dict)
-    numeric_metrics: dict[str, dict[str, float]] = Field(default_factory=dict)
-    missing_values: dict[str, int] = Field(default_factory=dict)
-    notes: list[str] = Field(default_factory=list)
 
 
 class WebsiteQuery(BaseModel):
