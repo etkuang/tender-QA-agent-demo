@@ -105,24 +105,6 @@ def build_default_data_context_catalog() -> DataContextCatalog:
             ],
         ),
         DataTableContext(
-            name="v_price_history",
-            domain=Category.PRICE,
-            description="同规格商品或服务的历史成交价格视图。每行表示一条成交或报价记录。",
-            primary_key=["product_id", "transaction_date"],
-            default_time_column="transaction_date",
-            default_entity_column="product_id",
-            freshness="报价时效由来源决定，回答必须显示报价或成交日期。",
-            columns=[
-                DataColumnContext(name="product_id", description="稳定商品 ID", data_type="text", semantic_type="identifier"),
-                DataColumnContext(name="specification", description="规格型号", data_type="text"),
-                DataColumnContext(name="unit", description="计量单位", data_type="text"),
-                DataColumnContext(name="region", description="成交地区", data_type="text"),
-                DataColumnContext(name="tax_basis", description="含税或不含税口径", data_type="text"),
-                DataColumnContext(name="price", description="成交价格", data_type="numeric"),
-                DataColumnContext(name="transaction_date", description="成交日期", data_type="date"),
-            ],
-        ),
-        DataTableContext(
             name="v_product_catalog",
             domain=Category.PRODUCT,
             description="商品目录与标准化参数视图。每行表示一个标准化商品型号。",
@@ -167,14 +149,6 @@ def build_default_data_context_catalog() -> DataContextCatalog:
             relationship_type="many_to_one",
             description="部署侧应优先用稳定企业 ID 连接；仅有名称时必须说明可能存在重名歧义。",
         ),
-        DataRelationshipContext(
-            left_table="v_price_history",
-            left_columns=["product_id"],
-            right_table="v_product_catalog",
-            right_columns=["product_id"],
-            relationship_type="many_to_one",
-            description="价格记录可通过 product_id 连接到标准化商品目录。",
-        ),
     ]
     metrics = [
         DataMetricDefinition(
@@ -211,18 +185,6 @@ def build_default_data_context_catalog() -> DataContextCatalog:
             caveats=["企业名称无法稳定消歧时不能直接合并统计。"],
         ),
         DataMetricDefinition(
-            name="成交均价",
-            domain=Category.PRICE,
-            description="同规格、同单位、同税口径条件下的成交价格平均值。",
-            formula="AVG(price)",
-            grain="product_id, specification, unit, tax_basis",
-            required_tables=["v_price_history"],
-            required_columns=["price", "specification", "unit", "tax_basis"],
-            filters=["price IS NOT NULL"],
-            time_logic="默认按 transaction_date 过滤。",
-            caveats=["不同规格、单位、税口径不能直接比较。"],
-        ),
-        DataMetricDefinition(
             name="负面舆情事件数",
             domain=Category.PUBLIC_OPINION,
             description="情绪方向为负面的独立事件聚类数量。",
@@ -250,11 +212,6 @@ def build_default_data_context_catalog() -> DataContextCatalog:
             ambiguity_notes=["可能指预算、中标金额、合同金额或企业财务收入。"],
         ),
         BusinessGlossaryTerm(
-            term="同规格",
-            domain=Category.PRICE,
-            definition="至少要求 specification、unit、tax_basis 可比，必要时还要限定地区和成交时间。",
-        ),
-        BusinessGlossaryTerm(
             term="负面舆情",
             domain=Category.PUBLIC_OPINION,
             definition="sentiment 为 negative 的独立事件聚类，不是转载文章条数。",
@@ -267,13 +224,6 @@ def build_default_data_context_catalog() -> DataContextCatalog:
             question="统计上个月各地区招标项目数量",
             sql="SELECT region, COUNT(DISTINCT project_id) AS project_count FROM v_tender_project WHERE publish_date >= :start_date AND publish_date < :end_date GROUP BY region ORDER BY project_count DESC LIMIT 200",
             tables=["v_tender_project"],
-        ),
-        ApprovedSQLExample(
-            name="价格 topN",
-            domain=Category.PRICE,
-            question="查询某规格商品最近 10 条成交价格",
-            sql="SELECT product_id, specification, unit, tax_basis, price, transaction_date FROM v_price_history WHERE specification = :specification ORDER BY transaction_date DESC LIMIT 10",
-            tables=["v_price_history"],
         ),
         ApprovedSQLExample(
             name="企业画像查询",

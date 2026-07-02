@@ -30,6 +30,7 @@ from agent_layer.schemas import (
     WorkflowResult,
 )
 from agent_layer.workflows.common import (
+    ChildTaskWorkflowProfile,
     build_citations,
     citations_are_valid,
     ensure_source_section,
@@ -38,7 +39,7 @@ from agent_layer.workflows.common import (
     rank_evidence,
 )
 from agent_layer.workflows.policy import POLICY_ANSWER_PROMPT, PolicyAssessmentChain, PolicyQueryParser
-from agent_layer.workflows.self_rag import merge_evidence, next_retrieval_queries, select_evidence
+from agent_layer.workflows.self_rag import PolicySelfRAGPlugin
 
 logger = get_logger("agent.workflows.policy_graph")
 
@@ -65,9 +66,10 @@ class PolicyGraphState(TypedDict, total=False):
     internet_searched: bool
 
 
-class PolicyGraphWorkflow:
+class PolicyWorkflow:
     def __init__(
         self,
+        profile: ChildTaskWorkflowProfile,
         retrieval: RetrievalPipeline,
         query_parser: PolicyQueryParser,
         assessment: PolicyAssessmentChain,
@@ -75,14 +77,17 @@ class PolicyGraphWorkflow:
         adapter: EvidenceAdapter,
         settings: Settings,
         checkpoint_runtime: LangGraphCheckpointRuntime,
+        self_rag: PolicySelfRAGPlugin,
         internet_client: WebsiteSearchClient | None = None,
     ):
+        self.profile = profile
         self.retrieval = retrieval
         self.query_parser = query_parser
         self.assessment = assessment
         self.adapter = adapter
         self.settings = settings
         self.checkpoint_runtime = checkpoint_runtime
+        self.self_rag = self_rag
         self.internet_client = internet_client
         self.answer_chain = POLICY_ANSWER_PROMPT | answer_model | StrOutputParser()
         self.progress_callbacks = {}
@@ -201,7 +206,7 @@ class PolicyGraphWorkflow:
         )
         await self._emit(state["run_id"], start_event)
         retrieval_output = await self.retrieval.retrieve_policy(query, state.get("policy_query"))
-        evidence = merge_evidence(state.get("evidence", []), retrieval_output.evidence)
+        evidence = self.self_rag.merge_evidence(state.get("evidence", []), retrieval_output.evidence)
         output_events = [event for event in retrieval_output.events if event.status != "started"]
         for event in output_events:
             await self._emit(state["run_id"], event)
@@ -247,7 +252,7 @@ class PolicyGraphWorkflow:
         }
         if not assessment.sufficient and assessment.need_more_local_retrieval:
             seen_queries = set(state.get("seen_queries", []))
-            follow_up_queries = next_retrieval_queries(
+            follow_up_queries = self.self_rag.next_retrieval_queries(
                 assessment,
                 seen_queries,
                 self.settings.max_follow_up_queries,
@@ -279,7 +284,7 @@ class PolicyGraphWorkflow:
             state["question"],
             assessment,
         )
-        evidence = merge_evidence(state.get("evidence", []), internet_evidence)
+        evidence = self.self_rag.merge_evidence(state.get("evidence", []), internet_evidence)
         for event in internet_events:
             await self._emit(state["run_id"], event)
         return {
@@ -295,7 +300,7 @@ class PolicyGraphWorkflow:
         return "synthesize"
 
     async def _synthesize(self, state: PolicyGraphState) -> dict:
-        evidence = select_evidence(state.get("evidence", []), state.get("assessment") or self._empty_assessment())
+        evidence = self.self_rag.select_evidence(state.get("evidence", []), state.get("assessment") or self._empty_assessment())
         if not evidence:
             result = WorkflowResult(
                 answer=NO_RESULTS_RESPONSE,

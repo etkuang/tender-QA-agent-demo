@@ -787,3 +787,85 @@ Proposed changes:
    - Remove the old SQL evidence adapter helper now that SQL evidence is built inside the new data-domain package.
 
 V0.65 release
+
+Follow-up proposal update on 2026-07-03:
+
+Proposed changes:
+1. Replace domain-specific profile naming with child-task workflow profile naming:
+   - Rename the profile model to ChildTaskWorkflowProfile.
+   - Keep only description, tools_pool, and tool_preference.
+   - Do not add ToolKind, merge strategy, freshness policy, or developer-only runtime validators.
+
+2. Make tool preference mean fallback order:
+   - Treat earlier tool tiers as primary evidence sources.
+   - Invoke later tiers only when no eligible evidence is found from earlier tiers.
+   - Preserve source differences truthfully instead of merging away conflicts.
+
+3. Inline workflow profile construction:
+   - Remove profile-only files under agent_layer/domains.
+   - Build category profiles directly in bootstrap.py.
+   - Keep the profile definitions close to workflow wiring.
+
+4. Define category-level tool policies:
+   - Policy uses RAG first and website second.
+   - Tender, company, and product use SQL first and website second.
+   - Public opinion uses SQL and website in the same primary tier.
+   - Other uses website first and model_only second.
+
+5. Remove the standalone price workflow category:
+   - Delete Category.PRICE and price-only profile or adapter paths.
+   - Remove price SQL catalog artifacts and capability text.
+   - Route price questions by business object instead of a separate price category.
+
+6. Preserve the designed question decomposition prompt structure:
+   - Keep role definition, format example, field statements, category statements, and decomposition rules.
+   - Replace only the category description block and the price-routing rule.
+   - Avoid broad prompt rewrites from draft prompt style.
+
+7. Revise category descriptions with examples:
+   - Use the "如..." format for policy, tender, public_opinion, company, and product.
+   - Put price examples under product where they belong to products or services.
+   - Keep other and unclear definitions concise.
+
+8. Use positive prompt routing for price-related questions:
+   - Route product or service price questions to product.
+   - Route project budget, winning amount, and transaction amount questions to tender.
+   - Route enterprise quotation ability and price competitiveness questions to company.
+   - Route insufficiently specified price questions to unclear.
+
+9. Establish a general non-policy child-task workflow:
+   - Add a profile-driven GeneralChildTaskWorkflow for SQL, website, and model_only tool tiers.
+   - Keep evidence eligibility checks before falling back to the next tier.
+   - Require answers to preserve source provenance and disclose conflicting evidence.
+
+10. Keep policy execution as a unified PolicyWorkflow:
+   - Do not delete policy.py, policy_graph.py, or the policy LangGraph flow.
+   - Keep policy parsing, local RAG retrieval, evidence assessment, official website fallback, reassessment, and synthesis.
+   - Preserve policy checkpoint lifecycle through LangGraphCheckpointRuntime.
+
+11. Make policy Self-RAG pluggable:
+   - Convert Self-RAG helper behavior into PolicySelfRAGPlugin.
+   - Inject the plugin into PolicyWorkflow.
+   - Use the plugin for evidence merging, follow-up query selection, and final evidence selection.
+
+12. Split policy and non-policy workflow wiring:
+   - Map Category.POLICY to PolicyWorkflow.
+   - Map tender, public_opinion, company, product, and other to GeneralChildTaskWorkflow.
+   - Keep CompositeAnswerWorkflow separate from child-task execution.
+
+13. Update data context retrieval around category instead of profile fields:
+   - Pass Category into DataContextRetriever.retrieve.
+   - Rank tables from catalog context without profile.sql_views.
+   - Keep SQL context selection independent of deleted domain profiles.
+
+14. Update website supplementation around category-keyed clients:
+   - Use category.value to select website adapters.
+   - Remove DomainProfile.website_adapters from website execution.
+   - Keep legacy adapter-name normalization in bootstrap for compatibility.
+
+15. Keep the proposal file exact and implementation-oriented:
+   - Prefer narrow target ranges and exact replacement code.
+   - Avoid whole-file rewrites unless a file is actually being deleted or created.
+   - Retain already-implemented proposal items unless a later correction explicitly supersedes them.
+
+V0.66 release

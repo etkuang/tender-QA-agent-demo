@@ -23,9 +23,9 @@ from agent_layer.schemas import (
     ToolEvent,
     WorkflowResult,
 )
-from agent_layer.data_domain.workflow import DataDomainWorkflow
-from agent_layer.workflows.general import CompositeAnswerWorkflow, GeneralWorkflow
-from agent_layer.workflows.policy_graph import PolicyGraphWorkflow
+from agent_layer.workflows.child_task import GeneralChildTaskWorkflow
+from agent_layer.workflows.general import CompositeAnswerWorkflow
+from agent_layer.workflows.policy_graph import PolicyWorkflow
 
 logger = get_logger("agent.app")
 
@@ -35,7 +35,7 @@ class ApplicationDependencies:
     settings: Settings
     quick_classifier: QuickResponseClassifier
     decomposer: QuestionDecomposer
-    child_task_workflows: dict[Category, GeneralWorkflow | PolicyGraphWorkflow | DataDomainWorkflow]
+    child_task_workflows: dict[Category, PolicyWorkflow | GeneralChildTaskWorkflow]
     composite_workflow: CompositeAnswerWorkflow
     checkpoint_runtime: LangGraphCheckpointRuntime
 
@@ -119,7 +119,6 @@ class StreamEventFormatter:
             Category.TENDER: "招标项目",
             Category.PUBLIC_OPINION: "舆情信息",
             Category.COMPANY: "企业信息",
-            Category.PRICE: "价格信息",
             Category.PRODUCT: "商品信息",
             Category.OTHER: "通用问题",
             Category.UNCLEAR: "需要澄清",
@@ -149,7 +148,6 @@ class StreamEventFormatter:
             Category.TENDER: "招标项目",
             Category.PUBLIC_OPINION: "舆情信息",
             Category.COMPANY: "企业信息",
-            Category.PRICE: "价格信息",
             Category.PRODUCT: "商品信息",
             Category.OTHER: "通用问题",
             Category.UNCLEAR: "需要澄清",
@@ -173,7 +171,6 @@ class StreamEventFormatter:
             "tender": "招标项目",
             "public_opinion": "舆情信息",
             "company": "企业信息",
-            "price": "价格信息",
             "product": "商品信息",
             "other": "通用问题",
             "unclear": "需要澄清",

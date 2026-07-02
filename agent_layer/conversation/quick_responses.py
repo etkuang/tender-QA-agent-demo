@@ -14,12 +14,12 @@ QUICK_RESPONSES = {
     QuickResponseType.GREETING_ZH: {
         "kind": QuickResponseType.GREETING_ZH.value,
         "route_content": "用户在进行问候，我会直接回应并简要说明可处理的问题范围。",
-        "content": "您好！我是招投标智能问答助手。我可以帮助您了解政策法规，并查询和分析招标项目、舆情动态、企业信息、价格数据和商品资料。请告诉我您想了解的问题。",
+        "content": "您好！我是招投标智能问答助手。我可以帮助您了解政策法规，并查询和分析招标项目、舆情动态、企业信息和商品资料。请告诉我您想了解的问题。",
     },
     QuickResponseType.GREETING_EN: {
         "kind": QuickResponseType.GREETING_EN.value,
         "route_content": "用户在进行英文问候，我会直接回应并简要说明可处理的问题范围。",
-        "content": "Hello! I’m a tendering and procurement Q&A assistant. I can help with policies and regulations, tenders, public opinion, companies, prices, and products. What would you like to know?",
+        "content": "Hello! I’m a tendering and procurement Q&A assistant. I can help with policies and regulations, tenders, public opinion, companies, and products. What would you like to know?",
     },
     QuickResponseType.THANKS_ZH: {
         "kind": QuickResponseType.THANKS_ZH.value,
@@ -44,12 +44,12 @@ QUICK_RESPONSES = {
     QuickResponseType.CAPABILITIES_ZH: {
         "kind": QuickResponseType.CAPABILITIES_ZH.value,
         "route_content": "用户在询问助手能力范围，我会直接说明可处理的问题类型。",
-        "content": "我是招投标智能问答助手，可以协助您了解政策法规，并查询和分析招标项目、舆情动态、企业信息、价格数据和商品资料。您可以直接描述查询对象、地区、时间范围和关注的问题。",
+        "content": "我是招投标智能问答助手，可以协助您了解政策法规，并查询和分析招标项目、舆情动态、企业信息和商品资料。您可以直接描述查询对象、地区、时间范围和关注的问题。",
     },
     QuickResponseType.CAPABILITIES_EN: {
         "kind": QuickResponseType.CAPABILITIES_EN.value,
         "route_content": "用户在用英文询问助手能力范围，我会直接说明可处理的问题类型。",
-        "content": "I’m a tendering and procurement Q&A assistant. I can help with policies, tenders, public opinion, companies, prices, and products. You can specify the subject, region, time range, and information you need.",
+        "content": "I’m a tendering and procurement Q&A assistant. I can help with policies, tenders, public opinion, companies, and products. You can specify the subject, region, time range, and information you need.",
     },
     QuickResponseType.WELLBEING_ZH: {
         "kind": QuickResponseType.WELLBEING_ZH.value,

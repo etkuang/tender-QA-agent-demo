@@ -2,8 +2,7 @@
 # @Author: Wang Qingkang
 
 from agent_layer.config import Settings
-from agent_layer.schemas import DependencyOutcome
-from agent_layer.workflows.common import DomainProfile
+from agent_layer.schemas import Category, DependencyOutcome
 from agent_layer.data_domain.context.catalog import DataContextCatalog
 from agent_layer.data_domain.schemas import (
     ApprovedSQLExample,
@@ -26,15 +25,15 @@ class DataContextRetriever:
         question: str,
         dependency_outcomes: list[DependencyOutcome],
         intent: DataIntentDecision,
-        profile: DomainProfile,
+        category: Category,
     ) -> DataContextBundle:
         text = self._query_text(question, dependency_outcomes, intent)
-        candidate_tables = self.catalog.tables_for_domain(profile.category)
-        selected_tables = self._rank_tables(text, candidate_tables, profile.sql_views)
+        candidate_tables = self.catalog.tables_for_domain(category)
+        selected_tables = self._rank_tables(text, candidate_tables)
         table_names = {table.name for table in selected_tables}
-        metrics = self._rank_metrics(text, self.catalog.metrics_for_domain(profile.category), intent)
-        glossary_terms = self._rank_glossary(text, self.catalog.glossary_for_domain(profile.category), intent)
-        examples = self._rank_examples(text, self.catalog.examples_for_domain(profile.category), table_names)
+        metrics = self._rank_metrics(text, self.catalog.metrics_for_domain(category), intent)
+        glossary_terms = self._rank_glossary(text, self.catalog.glossary_for_domain(category), intent)
+        examples = self._rank_examples(text, self.catalog.examples_for_domain(category), table_names)
         relationships = self.catalog.relationships_for_tables(table_names)
         denied_columns = sorted(
             {
@@ -45,7 +44,7 @@ class DataContextRetriever:
             }
         )
         return DataContextBundle(
-            domain=profile.category,
+            domain=category,
             dialect=self.settings.sql_dialect,
             tables=selected_tables,
             relationships=relationships,
@@ -63,14 +62,10 @@ class DataContextRetriever:
         self,
         text: str,
         tables: list[DataTableContext],
-        preferred_table_names: list[str],
     ) -> list[DataTableContext]:
         scored = []
         for table in tables:
-            score = 0
-            if table.name in preferred_table_names:
-                score += 3
-            score += self._contains_score(text, table.name)
+            score = self._contains_score(text, table.name)
             score += self._contains_score(text, table.description)
             for column in table.columns:
                 score += self._contains_score(text, column.name)
@@ -79,7 +74,7 @@ class DataContextRetriever:
         ordered = [
             table
             for score, table in sorted(scored, key=lambda item: item[0], reverse=True)
-            if score > 0 or table.name in preferred_table_names
+            if score > 0
         ]
         if not ordered:
             ordered = tables

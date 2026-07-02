@@ -1,22 +1,33 @@
 # coding: utf-8
 
 import re
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from agent_layer.schemas import Category, Citation, DependencyOutcome, Evidence
+from agent_layer.schemas import Citation, DependencyOutcome, Evidence
+
+ToolName = Literal["rag", "sql", "website", "model_only"]
 
 
-class DomainProfile(BaseModel):
-    category: Category
-    display_name: str
-    system_prompt: str
-    sql_views: list[str] = Field(default_factory=list)
-    website_adapters: list[str] = Field(default_factory=list)
-    required_evidence_fields: list[str] = Field(default_factory=list)
-    freshness_policy: str
-    analysis_template: str
-    citation_policy: str
+class ChildTaskWorkflowProfile(BaseModel):
+    description: str
+    tools_pool: list[ToolName]
+    tool_preference: list[list[ToolName]]
+
+
+def format_workflow_profile(profile: ChildTaskWorkflowProfile) -> str:
+    preference = " -> ".join(
+        " + ".join(tier)
+        for tier in profile.tool_preference
+    )
+    return "\n".join(
+        [
+            f"description: {profile.description}",
+            f"tools_pool: {', '.join(profile.tools_pool)}",
+            f"tool_preference: {preference}",
+        ]
+    )
 
 
 def format_dependency_outcomes(dependency_outcomes: list[DependencyOutcome]) -> str:

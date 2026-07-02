@@ -12,7 +12,6 @@ class Category(StrEnum):
     TENDER = "tender"
     PUBLIC_OPINION = "public_opinion"
     COMPANY = "company"
-    PRICE = "price"
     PRODUCT = "product"
     OTHER = "other"
     UNCLEAR = "unclear"
