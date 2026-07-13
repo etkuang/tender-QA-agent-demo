@@ -11,8 +11,6 @@ from agent_layer.workflows.common import format_dependency_outcomes
 
 logger = get_logger("agent.workflows.policy")
 
-ProgressCallback = Callable[[ToolEvent], Awaitable[None]]
-
 
 POLICY_ASSESSMENT_PROMPT = ChatPromptTemplate.from_messages(
     [

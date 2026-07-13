@@ -9,7 +9,6 @@ from agent_layer.data_domain.schemas import (
     BusinessGlossaryTerm,
     DataAccessPolicy,
     DataContextBundle,
-    DataIntentDecision,
     DataMetricDefinition,
     DataTableContext,
 )
@@ -22,17 +21,15 @@ class DataContextRetriever:
 
     def retrieve(
         self,
-        question: str,
-        dependency_outcomes: list[DependencyOutcome],
-        intent: DataIntentDecision,
+        query: str,
         category: Category,
     ) -> DataContextBundle:
-        text = self._query_text(question, dependency_outcomes, intent)
+        text = query.lower()
         candidate_tables = self.catalog.tables_for_domain(category)
         selected_tables = self._rank_tables(text, candidate_tables)
         table_names = {table.name for table in selected_tables}
-        metrics = self._rank_metrics(text, self.catalog.metrics_for_domain(category), intent)
-        glossary_terms = self._rank_glossary(text, self.catalog.glossary_for_domain(category), intent)
+        metrics = self._rank_metrics(text, self.catalog.metrics_for_domain(category))
+        glossary_terms = self._rank_glossary(text, self.catalog.glossary_for_domain(category))
         examples = self._rank_examples(text, self.catalog.examples_for_domain(category), table_names)
         relationships = self.catalog.relationships_for_tables(table_names)
         denied_columns = sorted(
@@ -84,24 +81,23 @@ class DataContextRetriever:
         self,
         text: str,
         metrics: list[DataMetricDefinition],
-        intent: DataIntentDecision,
     ) -> list[DataMetricDefinition]:
         selected = []
         for metric in metrics:
-            terms = [metric.name, metric.description, *intent.business_terms]
-            if any(self._contains_score(text, term) for term in terms):
+            if any(
+                self._contains_score(text, term)
+                for term in [metric.name, metric.description]
+            ):
                 selected.append(metric)
-        return selected or metrics[: self.settings.sql_context_example_limit]
 
     def _rank_glossary(
         self,
         text: str,
         glossary_terms: list[BusinessGlossaryTerm],
-        intent: DataIntentDecision,
     ) -> list[BusinessGlossaryTerm]:
         selected = []
         for term in glossary_terms:
-            terms = [term.term, term.definition, *term.synonyms, *intent.business_terms]
+            terms = [term.term, term.definition, *term.synonyms]
             if any(self._contains_score(text, value) for value in terms):
                 selected.append(term)
         return selected
@@ -124,26 +120,6 @@ class DataContextRetriever:
             if score > 0
         ]
         return ordered[: self.settings.sql_context_example_limit]
-
-    @staticmethod
-    def _query_text(
-        question: str,
-        dependency_outcomes: list[DependencyOutcome],
-        intent: DataIntentDecision,
-    ) -> str:
-        dependencies = " ".join(
-            f"{outcome.question} {outcome.answer}"
-            for outcome in dependency_outcomes
-        )
-        return " ".join(
-            [
-                question,
-                intent.normalized_question,
-                " ".join(intent.business_terms),
-                " ".join(intent.entities),
-                dependencies,
-            ]
-        ).lower()
 
     @staticmethod
     def _contains_score(text: str, value: str | None) -> int:

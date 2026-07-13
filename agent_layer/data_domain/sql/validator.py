@@ -21,16 +21,14 @@ class SQLPolicyValidator:
         "READ_PARQUET",
     }
 
-    def __init__(self, dialect: str, max_rows: int):
+    def __init__(self):
         try:
             import sqlglot
             from sqlglot import exp
         except ImportError as exc:
-            raise RuntimeError("The data-domain SQL workflow requires sqlglot.") from exc
+            raise RuntimeError("数据领域 SQL 工作流需要安装 sqlglot。") from exc
         self.sqlglot = sqlglot
         self.exp = exp
-        self.dialect = dialect
-        self.max_rows = max_rows
 
     def validate(self, candidate: SQLCandidate, context: DataContextBundle) -> SQLValidationResult:
         issues = []
@@ -39,11 +37,11 @@ class SQLPolicyValidator:
         except Exception as exc:
             return self._invalid(candidate.statement, "syntax_error", exc.__class__.__name__)
         if len(expressions) != 1:
-            return self._invalid(candidate.statement, "multiple_statements", "Only one SQL statement is allowed.")
+            return self._invalid(candidate.statement, "multiple_statements", "只允许一条 SQL 语句。")
 
         tree = expressions[0]
         if not isinstance(tree, (self.exp.Select, self.exp.Union)):
-            return self._invalid(candidate.statement, "not_read_only", "Only SELECT, WITH, or UNION queries are allowed.")
+            return self._invalid(candidate.statement, "not_read_only", "只允许 SELECT、WITH 或 UNION 查询。")
 
         forbidden_types = tuple(
             expression_type
@@ -63,10 +61,10 @@ class SQLPolicyValidator:
             if (expression_type := getattr(self.exp, name, None)) is not None
         )
         if forbidden_types and any(tree.find_all(*forbidden_types)):
-            issues.append(SQLValidationIssue(code="forbidden_statement", message="Write, DDL, system, or transaction statements are forbidden."))
+            issues.append(SQLValidationIssue(code="forbidden_statement", message="禁止写操作、DDL、系统命令和事务语句。"))
 
         if not context.access_policy.allow_select_star and list(tree.find_all(self.exp.Star)):
-            issues.append(SQLValidationIssue(code="select_star", message="SELECT * is not allowed."))
+            issues.append(SQLValidationIssue(code="select_star", message="不允许使用 SELECT *。"))
 
         cte_names = {cte.alias_or_name for cte in tree.find_all(self.exp.CTE)}
         tables = sorted(
@@ -77,54 +75,72 @@ class SQLPolicyValidator:
             }
         )
         if not tables:
-            issues.append(SQLValidationIssue(code="missing_table", message="The query must read at least one approved table."))
+            issues.append(SQLValidationIssue(code="missing_table", message="查询必须读取至少一个已批准的数据表。"))
         unknown_tables = [table for table in tables if table not in context.table_names]
         if unknown_tables:
-            issues.append(SQLValidationIssue(code="unknown_table", message=f"Unknown or unauthorized tables: {', '.join(unknown_tables)}."))
+            issues.append(SQLValidationIssue(code="unknown_table",
+                                             message=f"存在未知或未授权的数据表：{', '.join(unknown_tables)}。"))
 
         columns = sorted({column.name for column in tree.find_all(self.exp.Column) if column.name != "*"})
         unknown_columns = [column for column in columns if column not in context.column_names]
         if unknown_columns:
-            issues.append(SQLValidationIssue(code="unknown_column", message=f"Unknown or unauthorized columns: {', '.join(unknown_columns)}."))
+            issues.append(SQLValidationIssue(code="unknown_column",
+                                             message=f"存在未知或未授权的字段：{', '.join(unknown_columns)}。"))
         denied_columns = [column for column in columns if column in context.sensitive_column_names]
         if denied_columns:
-            issues.append(SQLValidationIssue(code="sensitive_column", message=f"Sensitive columns are not allowed: {', '.join(denied_columns)}."))
+            issues.append(
+                SQLValidationIssue(code="sensitive_column", message=f"不允许访问敏感字段：{', '.join(denied_columns)}。"))
 
         for function in tree.find_all(self.exp.Anonymous):
             if function.name.upper() in self.forbidden_function_names:
-                issues.append(SQLValidationIssue(code="forbidden_function", message=f"Forbidden function: {function.name}."))
+                issues.append(SQLValidationIssue(code="forbidden_function", message=f"禁止使用函数：{function.name}。"))
 
-        limit, limit_issue = self._enforce_limit(tree, context)
+        limit_issue = self._enforce_limit(tree, context)
         if limit_issue is not None:
             issues.append(limit_issue)
 
-        statement = tree.sql(dialect=context.dialect)
         return SQLValidationResult(
             valid=not issues,
-            statement=statement,
-            tables=tables,
-            columns=columns,
-            limit=limit,
+            statement=tree.sql(dialect=context.dialect),
             issues=issues,
         )
 
-    def _enforce_limit(self, tree, context: DataContextBundle):
+    def _enforce_limit(
+        self,
+        tree,
+        context: DataContextBundle,
+    ) -> SQLValidationIssue | None:
         if not context.access_policy.require_limit:
-            return None, None
+            return None
         limit_expression = tree.args.get("limit")
         if limit_expression is None:
-            tree.set("limit", self.exp.Limit(expression=self.exp.Literal.number(context.access_policy.max_rows)))
-            return context.access_policy.max_rows, None
+            tree.set(
+                "limit",
+                self.exp.Limit(
+                    expression=self.exp.Literal.number(
+                        context.access_policy.max_rows
+                    )
+                ),
+            )
+            return None
         value_expression = limit_expression.expression
         if not isinstance(value_expression, self.exp.Literal) or not value_expression.is_int:
-            return None, SQLValidationIssue(code="invalid_limit", message="LIMIT must be a positive integer literal.")
+            return SQLValidationIssue(
+                code="invalid_limit",
+                message="LIMIT 必须是正整数字面量。",
+            )
         limit_value = value_expression.to_py()
         if not isinstance(limit_value, int) or limit_value <= 0:
-            return None, SQLValidationIssue(code="invalid_limit", message="LIMIT must be positive.")
+            return SQLValidationIssue(
+                code="invalid_limit",
+                message="LIMIT 必须为正数。",
+            )
         if limit_value > context.access_policy.max_rows:
-            limit_expression.set("expression", self.exp.Literal.number(context.access_policy.max_rows))
-            return context.access_policy.max_rows, None
-        return limit_value, None
+            limit_expression.set(
+                "expression",
+                self.exp.Literal.number(context.access_policy.max_rows),
+            )
+        return None
 
     @staticmethod
     def _invalid(statement: str, code: str, message: str) -> SQLValidationResult:

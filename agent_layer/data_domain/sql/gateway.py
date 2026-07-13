@@ -58,7 +58,6 @@ class ReadOnlySQLGateway:
                 DataAuditEvent(
                     request_id=request.request_id,
                     domain=request.domain,
-                    question_type=request.question_type,
                     statement=request.statement,
                     parameter_names=sorted(request.parameters),
                     status="execution_failed",
@@ -72,7 +71,6 @@ class ReadOnlySQLGateway:
             DataAuditEvent(
                 request_id=request.request_id,
                 domain=request.domain,
-                question_type=request.question_type,
                 statement=request.statement,
                 parameter_names=sorted(request.parameters),
                 status="completed",

@@ -1,8 +1,6 @@
 # coding: utf-8
 
 import json
-import time
-import json
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
@@ -20,9 +18,6 @@ from agent_layer.workflows.common import (
 )
 
 logger = get_logger("agent.workflows.general")
-
-ProgressCallback = Callable[[ToolEvent], Awaitable[None]]
-
 
 COMPOSITE_ANSWER_PROMPT = ChatPromptTemplate.from_messages(
     [

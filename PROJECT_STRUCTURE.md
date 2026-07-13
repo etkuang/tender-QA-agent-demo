@@ -13,7 +13,7 @@ The runtime request path is:
 
 Frontend -> Backend -> Agent -> Knowledge Base -> Milvus.
 
-The Agent supports policy, tender, public-opinion, company, price, product, other, and unclear task categories. Multi-part questions are decomposed into child tasks, scheduled by dependency graph, executed through category-specific workflows, and synthesized into one final answer.
+The Agent supports policy, tender, public-opinion, company, product, other, and unclear task categories. Multi-part questions are decomposed into child tasks, scheduled by dependency graph, executed through category-specific workflows, and synthesized into one final answer.
 
 ## 2. Design Principles
 
@@ -83,7 +83,7 @@ Shared API contracts live in:
 ### 5.1 Composition And Lifecycle
 
 - `agent_layer/api.py`: FastAPI entrypoint, NDJSON transport formatting, request cancellation checks, and application lifespan.
-- `agent_layer/bootstrap.py`: async composition root. It creates model instances, retrieval clients, workflow objects, domain profiles, and the LangGraph checkpoint runtime.
+- `agent_layer/bootstrap.py`: async composition root. It creates model instances, retrieval clients, workflow objects, child-task workflow profiles, and the LangGraph checkpoint runtime.
 - `agent_layer/app.py`: Agent application facade and child-task orchestration helpers.
 - `agent_layer/config.py`: Agent runtime settings for LLM provider, Knowledge Base URL, streaming, history bounding, retrieval budgets, SQL limits, and LangGraph checkpoint path.
 - `agent_layer/checkpoint.py`: `LangGraphCheckpointRuntime`, which owns `langgraph.checkpoint.sqlite.aio.AsyncSqliteSaver` for the Agent process lifetime.
@@ -150,9 +150,9 @@ Policy execution is split between:
   - `PolicyQueryParser`
   - `PolicyAssessmentChain`
   - policy answer prompt
-- `workflows/policy_graph.py`: LangGraph `PolicyGraphWorkflow`.
+- `workflows/policy_graph.py`: LangGraph `PolicyWorkflow`.
 
-`PolicyGraphWorkflow` builds a `StateGraph` with these nodes:
+`PolicyWorkflow` builds a `StateGraph` with these nodes:
 
 1. `parse_policy`: extract law name, article id, date, and region.
 2. `retrieve`: retrieve local policy evidence through the Knowledge Base.
@@ -167,7 +167,7 @@ The graph is compiled with the LangGraph SQLite checkpointer. Each policy run us
 ### 5.7 Self-RAG Helpers
 
 - `workflows/self_rag.py`: evidence merging, follow-up query selection, and final evidence selection.
-- `workflows/common.py`: domain profile model, evidence formatting, citation validation, citation building, source-section enforcement, and evidence ranking.
+- `workflows/common.py`: child-task workflow profile model, evidence formatting, citation validation, citation building, source-section enforcement, and evidence ranking.
 
 Self-RAG retrieval budgets are configured by:
 
@@ -179,23 +179,24 @@ Self-RAG retrieval budgets are configured by:
 
 ### 5.8 Data-Domain Workflows
 
-Data-domain workflows cover:
+`workflows/child_task.py` owns the shared `GeneralChildTaskWorkflow` used for tender, public-opinion, company, product, and other child tasks. Category profiles are constructed in `bootstrap.py` and declare a description, tool pool, and ordered tool-preference tiers.
 
-- `domains/tender.py`
-- `domains/public_opinion.py`
-- `domains/company.py`
-- `domains/price.py`
-- `domains/product.py`
+Supporting data-domain implementation lives under `data_domain/`:
 
-The shared workflow implementation is `workflows/data_domain.py`.
+- `chains.py` and `prompts.py`: intent, SQL generation and repair, and answer chains plus prompt-input formatting.
+- `schemas.py`: intent, semantic-context, SQL request, validation, audit, and analysis models.
+- `context/`: category-aware tables, relationships, metrics, glossary terms, examples, and context retrieval.
+- `sql/`: read-only gateway and SQLGlot policy validation.
+- `analysis.py`: deterministic SQL-result analysis and evidence construction.
+- `web.py`: category-keyed website supplementation.
 
-It receives the resolved child-task question and bounded conversation context, then:
+The active general child-task flow:
 
-1. Generates a `ResearchPlan`.
-2. Validates research-task dependencies.
-3. Executes ready SQL and website jobs.
-4. Converts structured rows and website results into `Evidence`.
-5. Analyzes structured data deterministically where possible.
+1. Classifies the child-task intent.
+2. Iterates the profile's configured tool tiers.
+3. For SQL, retrieves semantic context, generates and validates a read-only query, performs bounded repair, executes through the injected gateway, analyzes the result, and builds evidence.
+4. For website retrieval, invokes the configured category client and converts results into evidence.
+5. Stops after a tier yields eligible evidence, or uses the configured model-only fallback.
 6. Synthesizes a citation-checked child-task answer.
 
 SQL and website capabilities are dependency-injected. Missing adapters are reported as skipped. Source failures can be converted into unresolved workflow results so final synthesis can explain partial completion.
@@ -204,13 +205,14 @@ Data-domain workflows currently do not use checkpoint persistence. They can be m
 
 ### 5.9 SQL Boundary
 
-- `sql/gateway.py`: generates SQL candidates, validates them, executes read-only SQL through an injected executor, and records audit events.
-- `sql/validator.py`: uses `sqlglot` to parse a single read-only SELECT/CTE/UNION statement, restrict views and columns, block sensitive columns, block dangerous functions, and enforce LIMIT.
-- `sql/catalog.py` and `sql/schemas.py`: default view catalog and SQL model schemas.
+- `data_domain/sql/gateway.py`: read-only executor, audit-sink, and gateway contracts plus the audited gateway implementation.
+- `data_domain/sql/validator.py`: uses `sqlglot` to parse a single read-only SELECT/CTE/UNION statement, restrict tables and columns, block sensitive columns and dangerous functions, and enforce LIMIT.
+- `data_domain/context/catalog.py`: default semantic table, relationship, metric, glossary, and approved-example catalog.
+- `data_domain/schemas.py`: SQL candidate, execution-request, validation-result, audit-event, and data-context models.
 
-The current SQL dialect is an internal validator constant:
+The current SQL dialect is configured through Agent settings:
 
-- `SQL_DIALECT = "sqlite"`
+- `sql_dialect = "sqlite"`
 
 The only remaining SQL runtime row cap is:
 
@@ -221,7 +223,7 @@ The default Agent application still does not construct a real SQL executor. A re
 ### 5.10 Website Adapters
 
 - `adapters/base.py`: shared website adapter protocol, request model, config model, and base adapter behavior.
-- `adapters/policy_internet.py`, `tender_web.py`, `public_opinion_web.py`, `company_web.py`, `price_web.py`, `product_web.py`: category marker adapters.
+- `adapters/policy_internet.py`, `tender_web.py`, `public_opinion_web.py`, `company_web.py`, and `product_web.py`: category marker adapters.
 
 The adapter subclasses currently declare only their expected category. Real request construction and response parsing must be implemented by deployment-specific adapters.
 
@@ -229,7 +231,7 @@ For policy internet evidence, the workflow currently trusts `SourceTier.OFFICIAL
 
 ### 5.11 Schemas And Events
 
-- `schemas.py`: categories, task statuses, child tasks, quick-response decisions, policy queries, evidence, citations, research plans, data results, website queries, tool events, workflow results, child-task outcomes, and stream events.
+- `schemas.py`: categories, child tasks, quick-response decisions, policy queries, evidence, citations, data results, website queries, tool events, workflow results, child-task outcomes, and stream events.
 - `StreamEventType`: route, progress, reasoning summary, source, assistant delta, and error.
 - `agent_layer/api.py`: adapts internal stream events to Backend transport chunks.
 

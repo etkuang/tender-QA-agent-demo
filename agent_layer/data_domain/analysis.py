@@ -5,20 +5,11 @@ import hashlib
 import json
 
 from agent_layer.schemas import Category, DataResult, Evidence, SourceType
-from agent_layer.data_domain.schemas import (
-    DataAnalysisSummary,
-    DataContextBundle,
-    DataIntentDecision,
-    DataQuestionType,
-)
+from agent_layer.data_domain.schemas import DataAnalysisSummary, DataContextBundle
 
 
 class DataResultAnalyzer:
-    def analyze(
-        self,
-        result: DataResult,
-        intent: DataIntentDecision,
-    ) -> DataAnalysisSummary:
+    def analyze(self, result: DataResult) -> DataAnalysisSummary:
         numeric_metrics = {}
         missing_values = {column: 0 for column in result.columns}
         for row in result.rows:
@@ -41,33 +32,22 @@ class DataResultAnalyzer:
                 bucket["avg"] = bucket["sum"] / bucket["count"]
         notes = []
         if result.truncated:
-            notes.append("Result was truncated by the configured row limit.")
+            notes.append("结果已按配置的最大行数截断。")
         if result.row_count == 0:
-            notes.append("SQL returned no rows for the selected filters.")
+            notes.append("SQL 在当前筛选条件下未返回数据。")
         return DataAnalysisSummary(
             query_id=result.query_id,
-            question_type=intent.question_type,
             row_count=result.row_count,
             truncated=result.truncated,
             columns=result.columns,
             numeric_metrics=numeric_metrics,
-            missing_values={column: count for column, count in missing_values.items() if count},
+            missing_values={
+                column: count
+                for column, count in missing_values.items()
+                if count
+            },
             notes=notes,
-            chart_suggestion=self._chart_suggestion(result, intent),
         )
-
-    @staticmethod
-    def _chart_suggestion(
-        result: DataResult,
-        intent: DataIntentDecision,
-    ) -> dict | None:
-        if intent.requested_mode.value != "chart":
-            return None
-        if intent.question_type == DataQuestionType.TIME_SERIES:
-            return {"type": "line", "x": result.columns[0] if result.columns else None, "y": result.columns[1:]}
-        if intent.question_type in {DataQuestionType.RANKING, DataQuestionType.AGGREGATION, DataQuestionType.COMPARISON}:
-            return {"type": "bar", "x": result.columns[0] if result.columns else None, "y": result.columns[1:]}
-        return {"type": "table"}
 
 
 def build_sql_evidence(
@@ -110,28 +90,6 @@ def build_sql_evidence(
             "truncated": result.truncated,
             "sql": statement,
             "analysis": analysis.model_dump(mode="json"),
-        },
-    )
-
-
-def build_context_evidence(
-    context: DataContextBundle,
-    domain: Category,
-    title: str,
-) -> Evidence:
-    content = context.model_dump_json()
-    return Evidence(
-        evidence_id=_stable_id(domain.value, "context", content),
-        domain=domain,
-        source_type=SourceType.SQL,
-        title=title,
-        content=content,
-        authority_level=2,
-        freshness_level=1,
-        metadata={
-            "context_tables": sorted(context.table_names),
-            "metrics": [metric.name for metric in context.metrics],
-            "glossary_terms": [term.term for term in context.glossary_terms],
         },
     )
 

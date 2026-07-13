@@ -11,13 +11,10 @@ from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import END, StateGraph
 
 from common.logger import get_logger
-from agent_layer.adapters.base import WebsiteSearchClient
 from agent_layer.conversation.fallback_messages import NO_RESULTS_RESPONSE
 from agent_layer.checkpoint import LangGraphCheckpointRuntime
 from agent_layer.config import Settings
 from agent_layer.errors import CitationValidationError, GenerationError, raise_model_error
-from agent_layer.retrieval.adapter import EvidenceAdapter
-from agent_layer.retrieval.pipeline import RetrievalPipeline
 from agent_layer.schemas import (
     Category,
     DependencyOutcome,
@@ -26,11 +23,9 @@ from agent_layer.schemas import (
     RetrievalAssessment,
     SourceTier,
     ToolEvent,
-    WebsiteQuery,
     WorkflowResult,
 )
 from agent_layer.workflows.common import (
-    ChildTaskWorkflowProfile,
     build_citations,
     citations_are_valid,
     ensure_source_section,
@@ -38,12 +33,12 @@ from agent_layer.workflows.common import (
     format_evidence,
     rank_evidence,
 )
+from agent_layer.workflows.tools import ChildTaskToolRegistry, ChildTaskToolRequest
 from agent_layer.workflows.policy import POLICY_ANSWER_PROMPT, PolicyAssessmentChain, PolicyQueryParser
 from agent_layer.workflows.self_rag import PolicySelfRAGPlugin
 
 logger = get_logger("agent.workflows.policy_graph")
 
-ProgressCallback = Callable[[ToolEvent], Awaitable[None]]
 RouteName = Literal["retrieve", "policy_internet", "assess", "synthesize"]
 
 
@@ -69,26 +64,20 @@ class PolicyGraphState(TypedDict, total=False):
 class PolicyWorkflow:
     def __init__(
         self,
-        profile: ChildTaskWorkflowProfile,
-        retrieval: RetrievalPipeline,
+        tool_registry: ChildTaskToolRegistry,
         query_parser: PolicyQueryParser,
         assessment: PolicyAssessmentChain,
         answer_model: BaseChatModel,
-        adapter: EvidenceAdapter,
         settings: Settings,
         checkpoint_runtime: LangGraphCheckpointRuntime,
         self_rag: PolicySelfRAGPlugin,
-        internet_client: WebsiteSearchClient | None = None,
     ):
-        self.profile = profile
-        self.retrieval = retrieval
+        self.tool_registry = tool_registry
         self.query_parser = query_parser
         self.assessment = assessment
-        self.adapter = adapter
         self.settings = settings
         self.checkpoint_runtime = checkpoint_runtime
         self.self_rag = self_rag
-        self.internet_client = internet_client
         self.answer_chain = POLICY_ANSWER_PROMPT | answer_model | StrOutputParser()
         self.progress_callbacks = {}
         self.graph = self._build_graph()
@@ -129,11 +118,10 @@ class PolicyWorkflow:
         history: str,
         dependency_outcomes: list[DependencyOutcome],
         requires_fresh_data: bool,
-        progress_callback: ProgressCallback | None = None,
+        progress_callback: Callable[[ToolEvent], Awaitable[None]],
     ) -> WorkflowResult:
         run_id = uuid.uuid4().hex
-        if progress_callback is not None:
-            self.progress_callbacks[run_id] = progress_callback
+        self.progress_callbacks[run_id] = progress_callback
         initial_state = PolicyGraphState(
             run_id=run_id,
             question=question,
@@ -198,23 +186,28 @@ class PolicyWorkflow:
         query = queries[0]
         remaining_queries = queries[1:]
         round_index = state.get("round_index", 0) + 1
-        start_event = ToolEvent(
-            stage="policy_retrieve",
-            status="started",
-            summary=f"Running policy retrieval round {round_index}.",
-            details={"query": query, "round": round_index},
+        tool_result = await self.tool_registry.invoke(
+            "rag",
+            ChildTaskToolRequest(
+                category=Category.POLICY,
+                query=query,
+                run_id=state["run_id"],
+                progress_callback=self.progress_callbacks[state["run_id"]],
+                policy_query=state.get("policy_query"),
+            ),
         )
-        await self._emit(state["run_id"], start_event)
-        retrieval_output = await self.retrieval.retrieve_policy(query, state.get("policy_query"))
-        evidence = self.self_rag.merge_evidence(state.get("evidence", []), retrieval_output.evidence)
-        output_events = [event for event in retrieval_output.events if event.status != "started"]
-        for event in output_events:
-            await self._emit(state["run_id"], event)
+        evidence = self.self_rag.merge_evidence(
+            state.get("evidence", []),
+            tool_result.evidence,
+        )
         return {
             "retrieval_queries": remaining_queries,
             "round_index": round_index,
             "evidence": evidence,
-            "tool_events": [*state.get("tool_events", []), start_event, *output_events],
+            "tool_events": [
+                *state.get("tool_events", []),
+                *tool_result.tool_events,
+            ],
         }
 
     async def _assess(self, state: PolicyGraphState) -> dict:
@@ -283,10 +276,12 @@ class PolicyWorkflow:
         internet_evidence, internet_events = await self._search_internet(
             state["question"],
             assessment,
+            state["run_id"],
         )
-        evidence = self.self_rag.merge_evidence(state.get("evidence", []), internet_evidence)
-        for event in internet_events:
-            await self._emit(state["run_id"], event)
+        evidence = self.self_rag.merge_evidence(
+            state.get("evidence", []),
+            internet_evidence,
+        )
         return {
             "evidence": evidence,
             "internet_evidence_count": len(internet_evidence),
@@ -386,47 +381,31 @@ class PolicyWorkflow:
         self,
         question: str,
         assessment: RetrievalAssessment,
+        run_id: str,
     ) -> tuple[list[Evidence], list[ToolEvent]]:
-        if not self.settings.policy_internet_enabled or self.internet_client is None:
+        if not self.settings.policy_internet_enabled:
             event = ToolEvent(
                 stage="policy_internet",
                 status="skipped",
-                summary="Official policy internet adapter is not configured.",
+                summary="未启用政策官方网站检索。",
                 details={"missing_information": assessment.missing_information},
             )
+            await self._emit(run_id, event)
             return [], [event]
         query_parts = assessment.follow_up_queries or assessment.missing_information
         query_text = "；".join(query_parts) or question
-        website_query = WebsiteQuery(
-            query=f"{question} {query_text}",
-            category=Category.POLICY,
-            keywords=assessment.missing_information,
+        tool_result = await self.tool_registry.invoke(
+            "website",
+            ChildTaskToolRequest(
+                category=Category.POLICY,
+                query=f"{question} {query_text}",
+                run_id=run_id,
+                progress_callback=self.progress_callbacks[run_id],
+                keywords=assessment.missing_information,
+                required_source_tier=SourceTier.OFFICIAL,
+            ),
         )
-        started = time.perf_counter()
-        try:
-            results = await self.internet_client.search(
-                website_query,
-                self.settings.retrieval_batch_size,
-            )
-        except Exception:
-            logger.warning("policy internet adapter failed", exc_info=True)
-            event = ToolEvent(
-                stage="policy_internet",
-                status="failed",
-                summary="Official policy internet adapter is temporarily unavailable.",
-                duration_ms=(time.perf_counter() - started) * 1000,
-            )
-            return [], [event]
-        official_results = [result for result in results if result.source_tier == SourceTier.OFFICIAL]
-        evidence = [self.adapter.from_search_result(result, Category.POLICY) for result in official_results]
-        event = ToolEvent(
-            stage="policy_internet",
-            status="completed",
-            summary=f"Official policy internet search returned {len(evidence)} evidence items.",
-            duration_ms=(time.perf_counter() - started) * 1000,
-            details={"query": website_query.query, "evidence_count": len(evidence)},
-        )
-        return evidence, [event]
+        return tool_result.evidence, tool_result.tool_events
 
     async def _generate_answer(self, answer_input: dict) -> str:
         try:

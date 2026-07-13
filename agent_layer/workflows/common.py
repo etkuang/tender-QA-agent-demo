@@ -1,33 +1,32 @@
 # coding: utf-8
 
 import re
+from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from pydantic import BaseModel
 
-from agent_layer.schemas import Citation, DependencyOutcome, Evidence
+from agent_layer.schemas import Citation, DependencyOutcome, Evidence, ToolEvent
 
 ToolName = Literal["rag", "sql", "website", "model_only"]
 
 
+class ChildTaskQueryRoute(BaseModel):
+    route_name: str
+    definition: str
+    query_prompt: str
+
+
+class ChildTaskQueryDecision(BaseModel):
+    route_name: str
+    query: str
+
+
 class ChildTaskWorkflowProfile(BaseModel):
     description: str
+    query_routes: list[ChildTaskQueryRoute]
     tools_pool: list[ToolName]
     tool_preference: list[list[ToolName]]
-
-
-def format_workflow_profile(profile: ChildTaskWorkflowProfile) -> str:
-    preference = " -> ".join(
-        " + ".join(tier)
-        for tier in profile.tool_preference
-    )
-    return "\n".join(
-        [
-            f"description: {profile.description}",
-            f"tools_pool: {', '.join(profile.tools_pool)}",
-            f"tool_preference: {preference}",
-        ]
-    )
 
 
 def format_dependency_outcomes(dependency_outcomes: list[DependencyOutcome]) -> str:
@@ -56,10 +55,10 @@ def format_evidence(
         )
         block = (
             f"[{index}] {item.title}\n"
-            f"evidence_id={item.evidence_id}\n"
-            f"source_type={item.source_type.value}; published_at={item.published_at}; url={item.url or ''}\n"
-            f"metadata={metadata[:500]}\n"
-            f"content={item.content[:max_length]}"
+            f"证据 ID={item.evidence_id}\n"
+            f"来源类型={item.source_type.value}; 发布日期={item.published_at}; 网址={item.url or ''}\n"
+            f"元数据={metadata[:500]}\n"
+            f"内容={item.content[:max_length]}"
         )
         if max_total_chars is not None:
             remaining = max_total_chars - total_length
