@@ -168,6 +168,7 @@ class SearchResult(BaseModel):
 
 
 class ToolEvent(BaseModel):
+    task_id: str | None = None
     stage: str
     status: Literal["started", "completed", "skipped", "failed"]
     summary: str
@@ -176,7 +177,7 @@ class ToolEvent(BaseModel):
 
 
 class WorkflowResult(BaseModel):
-    answer: str
+    answer: str | None = None
     evidence: list[Evidence] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     tool_events: list[ToolEvent] = Field(default_factory=list)
@@ -184,6 +185,17 @@ class WorkflowResult(BaseModel):
     run_id: str | None = None
     status: Literal["solved", "unsolved"] = "solved"
     unresolved_reason: str | None = None
+
+    @model_validator(mode="after")
+    def validate_result_contract(self) -> Self:
+        if self.status == "solved" and self.answer is None:
+            raise ValueError("Solved workflow results must provide an answer")
+        if self.status == "unsolved":
+            if self.answer is not None:
+                raise ValueError("Unsolved workflow results must not provide an answer")
+            if self.unresolved_reason is None:
+                raise ValueError("Unsolved workflow results must provide an unresolved reason")
+        return self
 
 
 class DependencyOutcome(BaseModel):

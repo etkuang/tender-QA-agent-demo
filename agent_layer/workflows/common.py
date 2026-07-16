@@ -1,32 +1,65 @@
 # coding: utf-8
 
 import re
-from collections.abc import Awaitable, Callable
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
-from agent_layer.schemas import Citation, DependencyOutcome, Evidence, ToolEvent
+from agent_layer.data_domain.schemas import DataAnalysisSummary
+from agent_layer.schemas import Category, Citation, DependencyOutcome, Evidence
 
-ToolName = Literal["rag", "sql", "website", "model_only"]
-
-
-class ChildTaskQueryRoute(BaseModel):
-    route_name: str
-    definition: str
-    query_prompt: str
+ToolName = Literal["rag", "sql", "website"]
 
 
-class ChildTaskQueryDecision(BaseModel):
-    route_name: str
-    query: str
+class ChildTaskQueryType(BaseModel):
+    type_name: str
+    description: str
+    query_format: str
+
+
+class ChildTaskToolQuery(BaseModel):
+    tool_name: ToolName
+    query: str = Field(min_length=1)
+
+
+class ChildTaskToolSpec(BaseModel):
+    tool_name: ToolName
+    description: str
+    query_format: str
+
+
+class ChildTaskIntentDecision(BaseModel):
+    type_name: str
+    terminal_message: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_terminal_contract(self) -> Self:
+        is_terminal = self.type_name in {"clarification", "unsupported"}
+        if is_terminal and self.terminal_message is None:
+            raise ValueError("Terminal intent decisions require a message")
+        if not is_terminal and self.terminal_message is not None:
+            raise ValueError(
+                "Non-terminal intent decisions must not provide a message"
+            )
+        return self
+
+
+class ChildTaskTierQueryPlan(BaseModel):
+    tool_queries: list[ChildTaskToolQuery] = Field(min_length=1)
+
+
+class ChildTaskQueryResult(BaseModel):
+    tool_name: ToolName
+    original_query: str
+    query_result: list[Evidence] = Field(default_factory=list)
+    analysis: DataAnalysisSummary | None = None
 
 
 class ChildTaskWorkflowProfile(BaseModel):
-    description: str
-    query_routes: list[ChildTaskQueryRoute]
-    tools_pool: list[ToolName]
+    category: Category
+    query_types: list[ChildTaskQueryType]
     tool_preference: list[list[ToolName]]
+    model_only_fallback: bool = False
 
 
 def format_dependency_outcomes(dependency_outcomes: list[DependencyOutcome]) -> str:
@@ -38,37 +71,126 @@ def format_dependency_outcomes(dependency_outcomes: list[DependencyOutcome]) -> 
     )
 
 
-def format_evidence(
-    evidence: list[Evidence],
-    max_length: int = 1200,
-    max_chunks: int | None = None,
-    max_total_chars: int | None = None,
+def format_evidence_block(
+    evidence: Evidence,
+    index: int,
+    max_length: int,
 ) -> str:
+    metadata = ", ".join(
+        f"{key}={value}"
+        for key, value in evidence.metadata.items()
+        if value not in (None, "", [], {}) and key not in {"raw_content"}
+    )
+    return (
+        f"[{index}] {evidence.title}\n"
+        f"证据 ID={evidence.evidence_id}\n"
+        f"来源类型={evidence.source_type.value}; 发布日期={evidence.published_at}; "
+        f"网址={evidence.url or ''}\n"
+        f"元数据={metadata[:500]}\n"
+        f"内容={evidence.content[:max_length]}"
+    )
+
+
+def prepare_evidence_context(
+    evidence: list[Evidence],
+    max_length: int,
+    max_total_chars: int,
+) -> tuple[list[Evidence], str]:
     blocks = []
+    selected = []
     total_length = 0
-    selected = evidence[:max_chunks] if max_chunks is not None else evidence
-    for index, item in enumerate(selected, 1):
-        metadata = ", ".join(
-            f"{key}={value}"
-            for key, value in item.metadata.items()
-            if value not in (None, "", [], {}) and key not in {"raw_content"}
-        )
-        block = (
-            f"[{index}] {item.title}\n"
-            f"证据 ID={item.evidence_id}\n"
-            f"来源类型={item.source_type.value}; 发布日期={item.published_at}; 网址={item.url or ''}\n"
-            f"元数据={metadata[:500]}\n"
-            f"内容={item.content[:max_length]}"
-        )
-        if max_total_chars is not None:
-            remaining = max_total_chars - total_length
-            if remaining <= 0:
-                break
-            if len(block) > remaining:
-                block = block[:remaining]
+    for item in evidence:
+        block = format_evidence_block(item, len(selected) + 1, max_length)
+        separator = "\n\n" if blocks else ""
+        remaining = max_total_chars - total_length - len(separator)
+        if len(block) > remaining:
+            break
         blocks.append(block)
-        total_length += len(block)
-    return "\n\n".join(blocks)
+        selected.append(item)
+        total_length += len(separator) + len(block)
+    return selected, "\n\n".join(blocks)
+
+
+def format_query_result_evidence_block(
+    evidence: Evidence,
+    index: int,
+    max_length: int,
+) -> str:
+    source_identifier = evidence.url or evidence.document_id or evidence.evidence_id
+    return (
+        f"[{index}]\n"
+        f"来源：{evidence.title}；类型={evidence.source_type.value}；"
+        f"发布日期={evidence.published_at or '未知'}；标识={source_identifier}\n"
+        f"证据：{evidence.content[:max_length]}"
+    )
+
+
+def prepare_query_result_context(
+    query_results: list[ChildTaskQueryResult],
+    max_length: int,
+    max_total_chars: int,
+) -> tuple[list[Evidence], str]:
+    blocks = []
+    selected = []
+    total_length = 0
+
+    for query_result in query_results:
+        separator = "\n\n" if blocks else ""
+        remaining = max_total_chars - total_length - len(separator)
+        if remaining <= 0:
+            break
+
+        header = (
+            f"工具：{query_result.tool_name}\n"
+            f"原始查询：{query_result.original_query}\n"
+            "查询结果："
+        )
+        analysis = (
+            query_result.analysis.model_dump_json()
+            if query_result.analysis is not None
+            else "无。"
+        )
+        result_blocks = []
+        exhausted = False
+
+        if query_result.query_result:
+            for evidence in query_result.query_result:
+                block = format_query_result_evidence_block(
+                    evidence,
+                    len(selected) + 1,
+                    max_length,
+                )
+                result_text = "\n\n".join([*result_blocks, block])
+                candidate = (
+                    f"{header}\n{result_text}\n\n"
+                    f"确定性分析：{analysis}"
+                )
+                if len(candidate) > remaining:
+                    exhausted = True
+                    break
+                result_blocks.append(block)
+                selected.append(evidence)
+            result_text = (
+                "\n\n".join(result_blocks)
+                if result_blocks
+                else "上下文预算不足，未纳入证据。"
+            )
+        else:
+            result_text = "无返回结果。"
+
+        block = (
+            f"{header}\n{result_text}\n\n"
+            f"确定性分析：{analysis}"
+        )
+        if len(block) > remaining:
+            block = block[:remaining]
+        blocks.append(block)
+        total_length += len(separator) + len(block)
+        if exhausted or len(block) == remaining:
+            break
+
+    text = "\n\n".join(blocks) if blocks else "无外部查询结果。"
+    return selected, text
 
 
 def build_citations(evidence: list[Evidence]) -> list[Citation]:

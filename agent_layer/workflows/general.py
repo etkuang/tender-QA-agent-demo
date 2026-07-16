@@ -13,8 +13,7 @@ from agent_layer.workflows.common import (
     build_citations,
     citations_are_valid,
     ensure_source_section,
-    format_dependency_outcomes,
-    format_evidence,
+    prepare_evidence_context,
 )
 
 logger = get_logger("agent.workflows.general")
@@ -54,16 +53,15 @@ class CompositeAnswerWorkflow:
         child_results: list[dict],
         evidence: list[Evidence],
     ) -> WorkflowResult:
-        citations = build_citations(evidence)
-        evidence_text = (
-            format_evidence(
+        if evidence:
+            evidence, evidence_text = prepare_evidence_context(
                 evidence,
                 self.settings.evidence_chunk_chars,
-                max_total_chars=self.settings.evidence_context_chars,
+                self.settings.evidence_context_chars,
             )
-            if evidence
-            else "无引用证据。"
-        )
+        else:
+            evidence_text = "无引用证据。"
+        citations = build_citations(evidence)
         answer_input = {
             "question": question,
             "history": history,

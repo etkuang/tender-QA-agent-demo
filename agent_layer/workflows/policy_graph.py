@@ -2,7 +2,6 @@
 # @Author: Wang Qingkang
 
 import time
-import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, TypedDict
 
@@ -30,7 +29,7 @@ from agent_layer.workflows.common import (
     citations_are_valid,
     ensure_source_section,
     format_dependency_outcomes,
-    format_evidence,
+    prepare_evidence_context,
     rank_evidence,
 )
 from agent_layer.workflows.tools import ChildTaskToolRegistry, ChildTaskToolRequest
@@ -64,7 +63,6 @@ class PolicyGraphState(TypedDict, total=False):
 class PolicyWorkflow:
     def __init__(
         self,
-        tool_registry: ChildTaskToolRegistry,
         query_parser: PolicyQueryParser,
         assessment: PolicyAssessmentChain,
         answer_model: BaseChatModel,
@@ -72,7 +70,6 @@ class PolicyWorkflow:
         checkpoint_runtime: LangGraphCheckpointRuntime,
         self_rag: PolicySelfRAGPlugin,
     ):
-        self.tool_registry = tool_registry
         self.query_parser = query_parser
         self.assessment = assessment
         self.settings = settings
@@ -114,13 +111,13 @@ class PolicyWorkflow:
 
     async def run(
         self,
+        run_id: str,
         question: str,
         history: str,
         dependency_outcomes: list[DependencyOutcome],
         requires_fresh_data: bool,
         progress_callback: Callable[[ToolEvent], Awaitable[None]],
     ) -> WorkflowResult:
-        run_id = uuid.uuid4().hex
         self.progress_callbacks[run_id] = progress_callback
         initial_state = PolicyGraphState(
             run_id=run_id,
@@ -186,7 +183,7 @@ class PolicyWorkflow:
         query = queries[0]
         remaining_queries = queries[1:]
         round_index = state.get("round_index", 0) + 1
-        tool_result = await self.tool_registry.invoke(
+        tool_result = await ChildTaskToolRegistry.invoke(
             "rag",
             ChildTaskToolRequest(
                 category=Category.POLICY,
@@ -198,7 +195,7 @@ class PolicyWorkflow:
         )
         evidence = self.self_rag.merge_evidence(
             state.get("evidence", []),
-            tool_result.evidence,
+            tool_result.collect_evidence(),
         )
         return {
             "retrieval_queries": remaining_queries,
@@ -212,7 +209,11 @@ class PolicyWorkflow:
 
     async def _assess(self, state: PolicyGraphState) -> dict:
         started = time.perf_counter()
-        evidence = rank_evidence(state.get("evidence", []))
+        evidence, evidence_text = prepare_evidence_context(
+            rank_evidence(state.get("evidence", [])),
+            self.settings.evidence_chunk_chars,
+            self.settings.evidence_context_chars,
+        )
         start_event = ToolEvent(
             stage="policy_assessment",
             status="started",
@@ -223,11 +224,7 @@ class PolicyWorkflow:
         assessment = await self.assessment.assess(
             state["question"],
             state["dependency_outcomes"],
-            format_evidence(
-                evidence,
-                self.settings.evidence_chunk_chars,
-                max_total_chars=self.settings.evidence_context_chars,
-            ),
+            evidence_text,
             len(evidence),
         )
         event = ToolEvent(
@@ -295,10 +292,17 @@ class PolicyWorkflow:
         return "synthesize"
 
     async def _synthesize(self, state: PolicyGraphState) -> dict:
-        evidence = self.self_rag.select_evidence(state.get("evidence", []), state.get("assessment") or self._empty_assessment())
+        evidence, evidence_text = prepare_evidence_context(
+            self.self_rag.select_evidence(
+                state.get("evidence", []),
+                state.get("assessment") or self._empty_assessment(),
+            ),
+            self.settings.evidence_chunk_chars,
+            self.settings.evidence_context_chars,
+        )
         if not evidence:
             result = WorkflowResult(
-                answer=NO_RESULTS_RESPONSE,
+                answer=None,
                 tool_events=state.get("tool_events", []),
                 model_calls=state.get("model_calls", 0),
                 run_id=state["run_id"],
@@ -308,26 +312,20 @@ class PolicyWorkflow:
             return {"result": result}
         assessment = state.get("assessment") or self._empty_assessment()
         citations = build_citations(evidence)
-        evidence_text = format_evidence(
-            evidence,
-            self.settings.evidence_chunk_chars,
-            max_total_chars=self.settings.evidence_context_chars,
-        )
         if not assessment.sufficient:
             missing_information = "；".join(assessment.missing_information)
-            answer = f"当前政策证据不足，无法可靠回答：{assessment.reason}"
+            reason = f"当前政策证据不足，无法可靠回答：{assessment.reason}"
             if missing_information:
-                answer += f" 缺少信息：{missing_information}。"
-            answer = ensure_source_section(answer, citations)
+                reason += f" 缺少信息：{missing_information}。"
             result = WorkflowResult(
-                answer=answer,
+                answer=None,
                 evidence=evidence,
                 citations=citations,
                 tool_events=state.get("tool_events", []),
                 model_calls=state.get("model_calls", 0),
                 run_id=state["run_id"],
                 status="unsolved",
-                unresolved_reason=answer,
+                unresolved_reason=reason,
             )
             return {"result": result}
 
@@ -394,7 +392,7 @@ class PolicyWorkflow:
             return [], [event]
         query_parts = assessment.follow_up_queries or assessment.missing_information
         query_text = "；".join(query_parts) or question
-        tool_result = await self.tool_registry.invoke(
+        tool_result = await ChildTaskToolRegistry.invoke(
             "website",
             ChildTaskToolRequest(
                 category=Category.POLICY,
@@ -405,7 +403,7 @@ class PolicyWorkflow:
                 required_source_tier=SourceTier.OFFICIAL,
             ),
         )
-        return tool_result.evidence, tool_result.tool_events
+        return tool_result.collect_evidence(), tool_result.tool_events
 
     async def _generate_answer(self, answer_input: dict) -> str:
         try:

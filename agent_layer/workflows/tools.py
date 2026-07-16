@@ -9,14 +9,11 @@ from typing import Protocol
 
 from agent_layer.config import Settings
 from agent_layer.errors import SQLExecutionError
-from agent_layer.schemas import Category, DataResult, Evidence, PolicyQuery, SourceTier, ToolEvent
-from agent_layer.workflows.common import ToolName
+from agent_layer.schemas import Category, Evidence, PolicyQuery, SourceTier, ToolEvent
 from agent_layer.data_domain.analysis import DataResultAnalyzer, build_sql_evidence
 from agent_layer.data_domain.chains import DataSQLGenerator, DataSQLRepairChain
 from agent_layer.data_domain.context.retriever import DataContextRetriever
 from agent_layer.data_domain.schemas import (
-    DataAnalysisSummary,
-    DataContextBundle,
     SQLExecutionRequest,
     SQLRepairInput,
     SQLValidationResult,
@@ -25,6 +22,11 @@ from agent_layer.data_domain.sql.gateway import SQLGateway
 from agent_layer.data_domain.sql.validator import SQLPolicyValidator
 from agent_layer.data_domain.web import WebsiteSupplementer
 from agent_layer.retrieval.pipeline import RetrievalPipeline
+from agent_layer.workflows.common import (
+    ChildTaskQueryResult,
+    ChildTaskToolSpec,
+    ToolName,
+)
 
 
 @dataclass(frozen=True)
@@ -40,14 +42,16 @@ class ChildTaskToolRequest:
 
 @dataclass
 class ChildTaskToolResult:
-    evidence: list[Evidence] = field(default_factory=list)
+    query_results: list[ChildTaskQueryResult] = field(default_factory=list)
     tool_events: list[ToolEvent] = field(default_factory=list)
-    context: DataContextBundle | None = None
-    sql_statement: str | None = None
-    sql_result: DataResult | None = None
-    analysis: DataAnalysisSummary | None = None
-    used_model_only: bool = False
     model_calls: int = 0
+
+    def collect_evidence(self) -> list[Evidence]:
+        return [
+            evidence
+            for query_result in self.query_results
+            for evidence in query_result.query_result
+        ]
 
 
 class ChildTaskTool(Protocol):
@@ -55,28 +59,51 @@ class ChildTaskTool(Protocol):
 
 
 class ChildTaskToolRegistry:
-    def __init__(self, tools: dict[ToolName, ChildTaskTool]):
-        self.tools = tools
+    tool_pool = {}
+    tool_specs = {
+        "rag": ChildTaskToolSpec(
+            tool_name="rag",
+            description="检索本地政策知识库中的政策条文和政策文档证据。",
+            query_format="生成适合语义检索的独立查询，保留政策名称、条款、地区、时间和需要核验的事实。",
+        ),
+        "sql": ChildTaskToolSpec(
+            tool_name="sql",
+            description="查询已配置的结构化业务数据库，并对查询结果执行确定性分析。",
+            query_format="生成面向 SQL 生成器的完整自然语言查询要求，明确实体、字段、筛选条件、时间范围、指标、聚合、排序和返回数量；不得直接生成 SQL。",
+        ),
+        "website": ChildTaskToolSpec(
+            tool_name="website",
+            description="检索当前类别的公开网站证据，用于核验当前信息或数据库之外的信息。",
+            query_format="生成适合网站检索的独立查询，明确实体、关键词、地区、时间范围、需要核验的事实和来源要求。",
+        ),
+    }
 
-    def subset(self, tool_names: list[ToolName]) -> "ChildTaskToolRegistry":
-        return ChildTaskToolRegistry(
-            {tool_name: self.tools[tool_name] for tool_name in tool_names}
-        )
+    @classmethod
+    def initialize(cls, tools: dict[ToolName, ChildTaskTool]) -> None:
+        cls.tool_pool = tools
 
+    @classmethod
+    def get_specs(cls, tool_names: list[ToolName]) -> list[ChildTaskToolSpec]:
+        return [cls.tool_specs[tool_name] for tool_name in tool_names]
+
+    @classmethod
     async def invoke(
-        self,
+        cls,
         tool_name: ToolName,
         request: ChildTaskToolRequest,
     ) -> ChildTaskToolResult:
-        return await self.tools[tool_name].invoke(request)
+        return await cls.tool_pool[tool_name].invoke(request)
 
+    @classmethod
     async def invoke_tier(
-        self,
-        tool_names: list[ToolName],
-        request: ChildTaskToolRequest,
+        cls,
+        requests: list[tuple[ToolName, ChildTaskToolRequest]],
     ) -> list[ChildTaskToolResult]:
         return await asyncio.gather(
-            *(self.tools[tool_name].invoke(request) for tool_name in tool_names)
+            *(
+                cls.tool_pool[tool_name].invoke(request)
+                for tool_name, request in requests
+            )
         )
 
 
@@ -92,7 +119,13 @@ class RAGChildTaskTool:
         for event in output.events:
             await request.progress_callback(event)
         return ChildTaskToolResult(
-            evidence=output.evidence,
+            query_results=[
+                ChildTaskQueryResult(
+                    tool_name="rag",
+                    original_query=request.query,
+                    query_result=output.evidence,
+                )
+            ],
             tool_events=output.events,
         )
 
@@ -128,7 +161,15 @@ class SQLChildTaskTool:
                 summary="未配置只读 SQL 网关。",
             )
             await request.progress_callback(event)
-            return ChildTaskToolResult(tool_events=[event], context=context)
+            return ChildTaskToolResult(
+                query_results=[
+                    ChildTaskQueryResult(
+                        tool_name="sql",
+                        original_query=request.query,
+                    )
+                ],
+                tool_events=[event],
+            )
 
         start_event = ToolEvent(
             stage="sql",
@@ -166,7 +207,6 @@ class SQLChildTaskTool:
                     evidence = build_sql_evidence(
                         sql_result,
                         context,
-                        analysis,
                         validation.statement,
                         request.category,
                         "结构化数据库查询结果",
@@ -180,12 +220,15 @@ class SQLChildTaskTool:
                     )
                     await request.progress_callback(event)
                     return ChildTaskToolResult(
-                        evidence=[evidence],
+                        query_results=[
+                            ChildTaskQueryResult(
+                                tool_name="sql",
+                                original_query=request.query,
+                                query_result=[evidence],
+                                analysis=analysis,
+                            )
+                        ],
                         tool_events=[start_event, event],
-                        context=context,
-                        sql_statement=validation.statement,
-                        sql_result=sql_result,
-                        analysis=analysis,
                         model_calls=model_calls,
                     )
             if attempt >= self.settings.sql_repair_attempts:
@@ -210,9 +253,13 @@ class SQLChildTaskTool:
         )
         await request.progress_callback(event)
         return ChildTaskToolResult(
+            query_results=[
+                ChildTaskQueryResult(
+                    tool_name="sql",
+                    original_query=request.query,
+                )
+            ],
             tool_events=[start_event, event],
-            context=context,
-            sql_statement=candidate.statement,
             model_calls=model_calls,
         )
 
@@ -229,18 +276,13 @@ class WebsiteChildTaskTool:
             request.required_source_tier,
             request.progress_callback,
         )
-        return ChildTaskToolResult(evidence=evidence, tool_events=events)
-
-
-class ModelOnlyChildTaskTool:
-    async def invoke(self, request: ChildTaskToolRequest) -> ChildTaskToolResult:
-        event = ToolEvent(
-            stage="model_only",
-            status="completed",
-            summary="未使用外部证据，进入明确标注的模型知识回答流程。",
-        )
-        await request.progress_callback(event)
         return ChildTaskToolResult(
-            tool_events=[event],
-            used_model_only=True,
+            query_results=[
+                ChildTaskQueryResult(
+                    tool_name="website",
+                    original_query=request.query,
+                    query_result=evidence,
+                )
+            ],
+            tool_events=events,
         )

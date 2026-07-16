@@ -53,25 +53,12 @@ class DataResultAnalyzer:
 def build_sql_evidence(
     result: DataResult,
     context: DataContextBundle,
-    analysis: DataAnalysisSummary,
     statement: str,
     domain: Category,
     title: str,
 ) -> Evidence:
     content = json.dumps(
-        {
-            "sql": statement,
-            "dialect": context.dialect,
-            "columns": result.columns,
-            "rows": result.rows,
-            "row_count": result.row_count,
-            "truncated": result.truncated,
-            "units": result.units,
-            "filters": result.filters,
-            "data_as_of": result.data_as_of.isoformat() if result.data_as_of else None,
-            "query_id": result.query_id,
-            "analysis": analysis.model_dump(mode="json"),
-        },
+        result.model_dump(mode="json"),
         ensure_ascii=False,
     )
     return Evidence(
@@ -89,7 +76,7 @@ def build_sql_evidence(
             "row_count": result.row_count,
             "truncated": result.truncated,
             "sql": statement,
-            "analysis": analysis.model_dump(mode="json"),
+            "dialect": context.dialect,
         },
     )
 

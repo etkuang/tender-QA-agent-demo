@@ -167,7 +167,7 @@ The graph is compiled with the LangGraph SQLite checkpointer. Each policy run us
 ### 5.7 Self-RAG Helpers
 
 - `workflows/self_rag.py`: evidence merging, follow-up query selection, and final evidence selection.
-- `workflows/common.py`: child-task workflow profile model, evidence formatting, citation validation, citation building, source-section enforcement, and evidence ranking.
+- `workflows/common.py`: child-task workflow profiles, intent and per-tool query schemas, grouped query-result schemas, evidence-context preparation, citation validation, citation building, source-section enforcement, and evidence ranking.
 
 Self-RAG retrieval budgets are configured by:
 
@@ -179,7 +179,11 @@ Self-RAG retrieval budgets are configured by:
 
 ### 5.8 Data-Domain Workflows
 
-`workflows/child_task.py` owns the shared `GeneralChildTaskWorkflow` used for tender, public-opinion, company, product, and other child tasks. Category profiles are constructed in `bootstrap.py` and declare a description, tool pool, and ordered tool-preference tiers.
+`workflows/child_task.py` owns the shared `GeneralChildTaskWorkflow` used for tender, public-opinion, company, product, and other child tasks. Category profiles are constructed in `bootstrap.py` and declare their category, query types, and ordered tool-preference tiers.
+
+`workflows/tools.py` currently defines a process-wide `ChildTaskToolRegistry` with class-level initialization, specification lookup, direct invocation, and tier invocation. Tool calls return grouped `ChildTaskQueryResult` values containing the original query, evidence, and optional deterministic analysis.
+
+The current tree is partway through a workflow-contract migration. `workflows/common.py` and `workflows/tools.py` use the new class-level registry and grouped-result contracts, while `workflows/child_task.py`, `workflows/policy_graph.py`, and `bootstrap.py` still contain calls to the previous bound registry, instance subsets, scalar decision query, and ungrouped tool-result fields. These modules are not internally aligned until that migration is completed.
 
 Supporting data-domain implementation lives under `data_domain/`:
 
@@ -190,13 +194,13 @@ Supporting data-domain implementation lives under `data_domain/`:
 - `analysis.py`: deterministic SQL-result analysis and evidence construction.
 - `web.py`: category-keyed website supplementation.
 
-The active general child-task flow:
+The general child-task flow represented by the current design:
 
 1. Classifies the child-task intent.
 2. Iterates the profile's configured tool tiers.
 3. For SQL, retrieves semantic context, generates and validates a read-only query, performs bounded repair, executes through the injected gateway, analyzes the result, and builds evidence.
 4. For website retrieval, invokes the configured category client and converts results into evidence.
-5. Stops after a tier yields eligible evidence, or uses the configured model-only fallback.
+5. Stops after a tier yields eligible evidence, except that a fresh-data task must first invoke a tier containing the website tool; otherwise it uses the configured model-only fallback.
 6. Synthesizes a citation-checked child-task answer.
 
 SQL and website capabilities are dependency-injected. Missing adapters are reported as skipped. Source failures can be converted into unresolved workflow results so final synthesis can explain partial completion.
@@ -239,7 +243,7 @@ Important contract separation:
 
 - `WorkflowResult`: workflow-level answer, evidence, citations, tool events, model-call count, run ID, status, and unresolved reason.
 - `ChildTaskOutcome`: task-level status and output used for dependency tracking and final synthesis.
-- `ToolEvent`: workflow progress record consumed by `StreamEventFormatter`.
+- `ToolEvent`: workflow progress record consumed by `StreamEventFormatter`; child-workflow callbacks attach the originating `task_id` before streaming.
 
 ## 6. Knowledge Base Layer
 
@@ -320,7 +324,7 @@ Backend chat history is separate from Agent LangGraph workflow checkpoints.
    - Final synthesis can still report completed work and explain missing parts.
 
 6. The policy workflow is resumable separately from chat history:
-   - LangGraph checkpoints are keyed by policy workflow `run_id`.
+   - LangGraph checkpoints are keyed by a policy workflow `run_id` derived from the request ID and child-task ID.
    - Backend session history remains a separate persistence concern.
 
 7. Model provider details are isolated:

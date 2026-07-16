@@ -1,8 +1,6 @@
 # coding: utf-8
 # @Author: Wang Qingkang
 
-import json
-
 from langchain_core.language_models import BaseChatModel
 
 from common.logger import get_logger
@@ -10,7 +8,6 @@ from agent_layer.config import Settings
 from agent_layer.errors import SQLValidationError, raise_model_error
 from agent_layer.data_domain.prompts import SQL_GENERATION_PROMPT, SQL_REPAIR_PROMPT
 from agent_layer.data_domain.schemas import (
-    DataAnalysisSummary,
     DataContextBundle,
     SQLCandidate,
     SQLRepairInput,
@@ -77,21 +74,6 @@ def format_data_context(context: DataContextBundle) -> str:
             "已批准的 SQL 示例：\n" + ("\n\n".join(examples) or "无"),
         ]
     )
-
-
-def format_sql_result(result) -> str:
-    if result is None:
-        return "无 SQL 执行结果。"
-    return json.dumps(
-        result.model_dump(mode="json"),
-        ensure_ascii=False,
-    )
-
-
-def format_analysis(analysis: DataAnalysisSummary | None) -> str:
-    if analysis is None:
-        return "无确定性分析摘要。"
-    return analysis.model_dump_json()
 
 
 def format_validation_issues(issues) -> str:

@@ -2,11 +2,11 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 
 from common.api_contracts.agent_api import Message
-from common.logger import get_logger
+from common.logger import get_logger, get_request_id
 from agent_layer.question_decomposition.chain import QuestionDecomposer
 from agent_layer.checkpoint import LangGraphCheckpointRuntime
 from agent_layer.conversation.quick_classifier import QuickResponseClassifier
@@ -288,7 +288,7 @@ class ChildWorkflowRunner:
         task: ChildTask,
         history: str,
         dependency_outcomes: list[DependencyOutcome],
-        enqueue_progress_event,
+        enqueue_progress_event: Callable[[ToolEvent], Awaitable[None]],
     ) -> ChildTaskOutcome:
         if task.category == Category.UNCLEAR:
             reason = task.clarification_question
@@ -299,14 +299,21 @@ class ChildWorkflowRunner:
                 unresolved_reason=reason,
             )
 
+        run_id = f"{get_request_id()}:{task.task_id}"
+
+        async def enqueue_task_progress(event: ToolEvent) -> None:
+            event.task_id = task.task_id
+            await enqueue_progress_event(event)
+
         try:
             workflow = self.dependencies.child_task_workflows[task.category]
             result = await workflow.run(
+                run_id,
                 task.question,
                 history,
                 dependency_outcomes,
                 task.requires_fresh_data,
-                enqueue_progress_event,
+                enqueue_task_progress,
             )
         except AgentError as exc:
             return ChildTaskOutcome(
@@ -342,7 +349,7 @@ class ChildTaskExecutor:
         task_graph: TaskGraph,
         original_question: str,
         history: str,
-        enqueue_progress_event,
+        enqueue_progress_event: Callable[[ToolEvent], Awaitable[None]],
     ) -> WorkflowResult:
         task_ids = task_graph.task_ids
         task_map = task_graph.task_map
@@ -526,7 +533,7 @@ class TenderQAApplication:
                         continue
                     yield StreamEvent(
                         type=StreamEventType.PROGRESS,
-                        content=self.formatter.progress_content(tool_event),
+                        content=f"{tool_event.task_id}：{self.formatter.progress_content(tool_event)}",
                     )
                 result = await workflow_task
             finally:
