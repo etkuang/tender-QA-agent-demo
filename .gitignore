@@ -2,7 +2,7 @@
 .scripts/
 .idea/
 knowledge_base_layer/data/model_cache
-agent_layer/data/databases
+agent_layer_old/data/databases
 app_backend_layer/history/history.db
 uv.lock
 codex_change_proposal.txt
@@ -12,3 +12,5 @@ __pycache__/
 logs/
 test.py
 deprecated_segments/
+AGENTS.md
+DEVELOPER_README.md

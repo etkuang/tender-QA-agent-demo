@@ -1,39 +1,35 @@
 # coding: utf-8
+# @Author: Wang Qingkang
 
+from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any
 
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.base import CheckpointTuple
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 
 class LangGraphCheckpointRuntime:
-    """Owns the LangGraph SQLite checkpointer for the Agent process lifetime."""
-
-    def __init__(self, path: Path, context: Any, saver: AsyncSqliteSaver):
+    def __init__(
+        self,
+        path: Path,
+        exit_stack: AsyncExitStack,
+        checkpointer: AsyncSqliteSaver,
+    ) -> None:
         self.path = path
-        self.context = context
-        self.saver = saver
+        self._exit_stack = exit_stack
+        self.checkpointer = checkpointer
 
     @classmethod
     async def open(cls, path: Path) -> "LangGraphCheckpointRuntime":
         path.parent.mkdir(parents=True, exist_ok=True)
-        context = AsyncSqliteSaver.from_conn_string(path.as_posix())
-        saver = await context.__aenter__()
-        return cls(path, context, saver)
+        exit_stack = AsyncExitStack()
+        checkpointer = await exit_stack.enter_async_context(
+            AsyncSqliteSaver.from_conn_string(path.as_posix())
+        )
+        return cls(path, exit_stack, checkpointer)
 
-    def config(self, run_id: str) -> RunnableConfig:
-        return {"configurable": {"thread_id": run_id}}
-
-    async def load(self, run_id: str) -> CheckpointTuple | None:
-        return await self.saver.aget_tuple(self.config(run_id))
-
-    async def history(self, run_id: str) -> list[CheckpointTuple]:
-        output = []
-        async for checkpoint in self.saver.alist(self.config(run_id)):
-            output.append(checkpoint)
-        return output
+    def config(self, thread_id: str) -> RunnableConfig:
+        return {"configurable": {"thread_id": thread_id}}
 
     async def close(self) -> None:
-        await self.context.__aexit__(None, None, None)
+        await self._exit_stack.aclose()

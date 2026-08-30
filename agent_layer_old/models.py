@@ -1,27 +1,20 @@
 # coding: utf-8
-# @Author: Wang Qingkang
-
-from functools import cache
 
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
-from agent_layer.config import Settings, settings
-from agent_layer.local_llm import LocalHuggingFaceChatModel, LocalHuggingFaceRuntime
-from agent_layer.model_concurrency import ConcurrencyLimitedChatModel, ModelConcurrencyGate
+from agent_layer_old.config import Settings
+from agent_layer_old.local_llm import LocalHuggingFaceChatModel, LocalHuggingFaceRuntime
+from agent_layer_old.model_concurrency import ConcurrencyLimitedChatModel, ModelConcurrencyGate
 
 
 class ModelFactory:
-    def __init__(self, runtime_settings: Settings):
-        self.settings = runtime_settings
+    def __init__(self, settings: Settings):
+        self.settings = settings
         self._local_runtime = None
         self._concurrency_gate = ModelConcurrencyGate(self._resolve_concurrency_limit())
 
-    def build_chat_model(
-        self,
-        temperature: float = 0.0,
-        max_tokens: int | None = None,
-    ) -> BaseChatModel:
+    def build_chat_model(self, temperature: float = 0.0, max_tokens: int | None = None) -> BaseChatModel:
         resolved_max_tokens = max_tokens if max_tokens is not None else self.settings.llm_max_tokens
         if self.settings.llm_provider == "local_huggingface":
             model = LocalHuggingFaceChatModel(
@@ -62,8 +55,3 @@ class ModelFactory:
                 trust_remote_code=self.settings.llm_local_trust_remote_code,
             )
         return self._local_runtime
-
-
-@cache
-def get_base_model() -> BaseChatModel:
-    return ModelFactory(settings).build_chat_model(temperature=0.0, max_tokens=1000)
