@@ -1,6 +1,8 @@
 # coding: utf-8
 # @Author: Wang Qingkang
 
+import uuid
+
 import streamlit as st
 
 from common.api_contracts.backend_api import ChatRequest, StreamChunk
@@ -33,11 +35,11 @@ def render_chat():
 
     # 2. Input Pipeline and Inference Execution
     if user_message := st.chat_input("Ask tender-agent"):
-        # Track if this is the initial turn of a new session
-        is_first_turn = False
-        if st.session_state.session_title == "New Chat":
+        # Allocate the conversation ID when its first question is submitted.
+        is_first_turn = st.session_state.session_id is None
+        if is_first_turn:
+            st.session_state.session_id = uuid.uuid4().hex
             st.session_state.session_title = user_message[:20] + "..."
-            is_first_turn = True
 
         with st.chat_message("user"):
             st.markdown(user_message)

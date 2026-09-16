@@ -41,6 +41,7 @@ async def stream_chat(req: ChatRequest, db: HistoryManager = Depends(get_db)):
 
     history_messages = await db.load_messages(req.session_id)
     agent_request = AgentStreamRequest(
+        session_id=req.session_id,
         user_message=req.user_message,
         history_messages=[
             Message(role=message["type"], content=message["content"])

@@ -41,6 +41,18 @@ class Category(StrEnum):
     UNCLEAR = "unclear"
 
 
+class AnswerStatus(StrEnum):
+    ANSWERED = "answered"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    NEEDS_CLARIFICATION = "needs_clarification"
+
+
+class AnswerDraft(BaseModel):
+    status: AnswerStatus
+    answer: str = Field(min_length=1)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class ChildTask(BaseModel):
     task_id: str
     question: str

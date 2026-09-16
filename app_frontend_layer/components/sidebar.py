@@ -1,8 +1,6 @@
 # coding: utf-8
 # @Author: Wang Qingkang
 
-import uuid
-
 import streamlit as st
 
 from app_frontend_layer.api_client import request_delete_session, request_history_list, request_session_messages
@@ -77,7 +75,7 @@ def render_sidebar():
     """ Renders the primary navigation sidebar."""
     with st.sidebar:
         if st.button("➕ New Chat", use_container_width=True):
-            st.session_state.session_id = str(uuid.uuid4())
+            st.session_state.session_id = None
             st.session_state.session_title = "New Chat"
             st.session_state.messages = []
             st.rerun()

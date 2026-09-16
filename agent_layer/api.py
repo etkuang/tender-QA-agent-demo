@@ -45,6 +45,7 @@ async def stream_chat(req: AgentStreamRequest, request: Request) -> StreamingRes
             async for chunk in request.app.state.application.stream(
                     req.user_message,
                     req.history_messages,
+                    session_id=req.session_id,
             ):
                 if await request.is_disconnected():
                     logger.info("agent.stream cancelled by client")

@@ -1,8 +1,6 @@
 # coding: utf-8
 # @Author: Wang Qingkang
 
-import uuid
-
 import streamlit as st
 
 from app_frontend_layer.components.chat_view import render_chat
@@ -19,7 +17,7 @@ def init_state():
             first_session = st.session_state.history_list[0]
             load_session(first_session["session_id"], first_session["title"])
         else:
-            st.session_state.session_id = str(uuid.uuid4())
+            st.session_state.session_id = None
             st.session_state.session_title = "New Chat"
             st.session_state.messages = []
 

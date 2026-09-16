@@ -12,6 +12,7 @@ class Message(BaseModel):
 
 
 class AgentStreamRequest(BaseModel):
+    session_id: str
     user_message: str
     history_messages: list[Message] = Field(default_factory=list)
 
